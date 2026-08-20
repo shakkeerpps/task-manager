@@ -23,6 +23,8 @@ interface Task {
   status: TaskStatus;
   start_date: string;
   due_date: string;
+  start_time?: string;
+  due_time?: string;
   description?: string;
   frequency: TaskFrequency;
   recurring_day?: string;
@@ -58,7 +60,7 @@ export default function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
   
   // Filters
   const [search, setSearch] = useState('');
@@ -88,6 +90,8 @@ export default function Dashboard() {
     recurring_date: number;
     start_date: string;
     due_date: string;
+    start_time: string;
+    due_time: string;
     description: string;
   }>({
     title: '',
@@ -98,7 +102,9 @@ export default function Dashboard() {
     recurring_day: 'Monday',
     recurring_date: 1,
     start_date: format(new Date(), 'yyyy-MM-dd'),
-    due_date: format(addDays(new Date(), 5), 'yyyy-MM-dd'),
+    due_date: format(addDays(new Date(), 3), 'yyyy-MM-dd'),
+    start_time: '',
+    due_time: '',
     description: '',
   });
 
@@ -106,21 +112,25 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfWeek(new Date(), { weekStartsOn: 0 }), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
+  // Live Timer: Real-time update every minute for indicator line
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     loadAllData();
   }, []);
 
   const loadAllData = async () => {
-    setLoading(true);
     await Promise.all([fetchDepartments(), fetchTasks(), fetchHistory()]);
-    setLoading(false);
   };
 
   const fetchDepartments = async () => {
-    const { data, error } = await supabase.from('departments').select('*').order('name');
-    if (error) {
-      console.error('Error loading departments:', error);
-    } else if (data) {
+    const { data } = await supabase.from('departments').select('*').order('name');
+    if (data) {
       setDepartments(data);
       if (data.length > 0 && !formData.department_id) {
         setFormData(prev => ({ ...prev, department_id: data[0].id }));
@@ -129,17 +139,13 @@ export default function Dashboard() {
   };
 
   const fetchTasks = async () => {
-    const { data, error } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
-    if (error) {
-      console.error('Error loading tasks:', error);
-    } else if (data) {
-      setTasks(data as Task[]);
-    }
+    const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
+    if (data) setTasks(data as Task[]);
   };
 
   const fetchHistory = async () => {
-    const { data, error } = await supabase.from('task_history').select('*').order('changed_at', { ascending: false }).limit(25);
-    if (!error && data) setHistory(data);
+    const { data } = await supabase.from('task_history').select('*').order('changed_at', { ascending: false }).limit(25);
+    if (data) setHistory(data);
   };
 
   // Add Task
@@ -158,6 +164,8 @@ export default function Dashboard() {
       recurring_date: formData.frequency === 'monthly' ? Number(formData.recurring_date) : null,
       start_date: formData.start_date,
       due_date: formData.due_date,
+      start_time: formData.start_time || null,
+      due_time: formData.due_time || null,
       description: formData.description,
       owner_name: 'Me'
     };
@@ -174,6 +182,8 @@ export default function Dashboard() {
         ...prev,
         title: '',
         description: '',
+        start_time: '',
+        due_time: ''
       }));
       fetchTasks();
       fetchHistory();
@@ -195,6 +205,8 @@ export default function Dashboard() {
       recurring_date: activeTask.frequency === 'monthly' ? Number(activeTask.recurring_date) : null,
       start_date: activeTask.start_date,
       due_date: activeTask.due_date,
+      start_time: activeTask.start_time || null,
+      due_time: activeTask.due_time || null,
       description: activeTask.description,
     }).eq('id', activeTask.id);
 
@@ -212,9 +224,7 @@ export default function Dashboard() {
   const handleDeleteTask = async (taskId: string, title: string) => {
     if (!confirm(`Are you sure you want to delete "${title}"?`)) return;
     const { error } = await supabase.from('tasks').delete().eq('id', taskId);
-    if (error) {
-      alert('Error deleting task: ' + error.message);
-    } else {
+    if (!error) {
       await supabase.from('task_history').insert([{ action: `Deleted task: "${title}"` }]);
       setActiveTask(null);
       fetchTasks();
@@ -247,6 +257,11 @@ export default function Dashboard() {
   const todayCount = useMemo(() => tasks.filter(t => isToday(parseISO(t.start_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
   const overdueCount = useMemo(() => tasks.filter(t => parseISO(t.due_date) < new Date() && t.status !== 'Completed' && t.status !== 'Resolved' && t.status !== 'Cancelled').length, [tasks]);
 
+  // Current Live Time Position Calculation (in Pixels)
+  const currentDayIndex = differenceInDays(new Date(), timelineStart);
+  const currentHourPercent = (currentTime.getHours() * 60 + currentTime.getMinutes()) / 1440; // 0 to 1 ratio of the day
+  const liveIndicatorPosition = currentDayIndex >= 0 && currentDayIndex < 21 ? (currentDayIndex + currentHourPercent) * 60 : null;
+
   const filteredTasks = useMemo(() => {
     return tasks.filter(task => {
       if (search && !task.title.toLowerCase().includes(search.toLowerCase()) && !(task.description || '').toLowerCase().includes(search.toLowerCase())) {
@@ -277,7 +292,7 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       
-      {/* 1. TOP HEADER & CONTROLS */}
+      {/* 1. TOP HEADER & FILTERS */}
       <header className="bg-white border-b border-slate-200 px-6 py-3 sticky top-0 z-40 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -286,7 +301,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-slate-900 leading-tight">Project Timeline Hub</h1>
-              <p className="text-xs text-slate-500">{filteredTasks.length} Showing • {tasks.length} Total Tasks</p>
+              <p className="text-xs text-slate-500">Live Time: {format(currentTime, 'hh:mm a')} • {filteredTasks.length} Showing</p>
             </div>
           </div>
 
@@ -392,12 +407,22 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* 2. TIMELINE TABLE */}
+      {/* 2. TIMELINE TABLE VIEW */}
       <div className="flex-1 overflow-x-auto overflow-y-auto">
-        <div className="min-w-[1680px]">
+        <div className="min-w-[1680px] relative">
           
+          {/* LIVE CURRENT TIME INDICATOR LINE (Vertical Red Line with Glowing Dot) */}
+          {liveIndicatorPosition !== null && (
+            <div
+              style={{ left: `calc(400px + ${liveIndicatorPosition}px)` }}
+              className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.6)]"
+            >
+              <div className="sticky top-11 -ml-[4px] w-2.5 h-2.5 rounded-full bg-rose-600 ring-4 ring-rose-200 animate-pulse" />
+            </div>
+          )}
+
           {/* Header Row (Sticky Left + Sticky Top) */}
-          <div className="grid grid-cols-[400px_repeat(21,60px)] bg-slate-100 border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+          <div className="grid grid-cols-[400px_repeat(21,60px)] bg-slate-100 border-b border-slate-200 sticky top-0 z-20 shadow-xs">
             <div className="p-3 text-xs font-bold text-slate-600 uppercase border-r border-slate-200 bg-slate-100 sticky left-0 z-30 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
               Task & Details
             </div>
@@ -413,7 +438,7 @@ export default function Dashboard() {
             })}
           </div>
 
-          {/* Department Categories */}
+          {/* Department Categories & Task Rows */}
           {departments.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-sm">
               No categories found. Click <b>Categories</b> above or run the SQL script to initialize.
@@ -428,7 +453,7 @@ export default function Dashboard() {
                   <div key={dept.id} className="border-b border-slate-200">
                     {/* Category Banner */}
                     <div className="grid grid-cols-[400px_repeat(21,60px)] bg-slate-100/70 border-b border-slate-200/60">
-                      <div className="px-4 py-2 flex items-center gap-2 bg-slate-100/90 border-r border-slate-200 sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                      <div className="px-4 py-2 flex items-center gap-2 bg-slate-100/90 border-r border-slate-200 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                         <span className="px-2.5 py-0.5 rounded-full text-xs font-bold text-white shadow-2xs" style={{ backgroundColor: dept.color || '#475569' }}>
                           {dept.name}
                         </span>
@@ -442,14 +467,12 @@ export default function Dashboard() {
                       <div className="py-2 px-6 text-xs text-slate-400 italic">No tasks in this category</div>
                     ) : (
                       deptTasks.map((task) => {
-                        // Calculate positions relative to 21-day timeline
                         const taskStart = parseISO(task.start_date);
                         const taskEnd = parseISO(task.due_date);
                         
                         const rawStartDiff = differenceInDays(taskStart, timelineStart);
                         const rawDuration = differenceInDays(taskEnd, taskStart) + 1;
 
-                        // Clamping for smooth visible bar rendering
                         const clampedStart = Math.max(0, rawStartDiff);
                         const visibleEnd = Math.min(21, rawStartDiff + rawDuration);
                         const visibleDuration = Math.max(1, visibleEnd - clampedStart);
@@ -475,11 +498,18 @@ export default function Dashboard() {
                                     </span>
                                   )}
                                 </div>
-                                {task.description && (
-                                  <span className="text-[10px] text-slate-400 truncate max-w-[210px]">
-                                    {task.description}
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-2">
+                                  {task.start_time && (
+                                    <span className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5">
+                                      <Clock className="w-2.5 h-2.5" /> {task.start_time} {task.due_time ? `- ${task.due_time}` : ''}
+                                    </span>
+                                  )}
+                                  {task.description && (
+                                    <span className="text-[10px] text-slate-400 truncate max-w-[150px]">
+                                      {task.description}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                               
                               <div className="flex items-center gap-1.5 shrink-0">
@@ -494,7 +524,6 @@ export default function Dashboard() {
 
                             {/* Gantt Timeline Bar & Recurrence Indicators */}
                             <div className="col-span-21 relative h-full flex items-center">
-                              {/* Continuous Bar for Single / Range Tasks */}
                               {task.frequency === 'once' && isVisible && (
                                 <div
                                   style={{
@@ -509,11 +538,10 @@ export default function Dashboard() {
                                       : 'bg-indigo-50 border border-indigo-300 text-indigo-800 hover:ring-2 hover:ring-indigo-400'
                                   }`}
                                 >
-                                  {task.title}
+                                  {task.title} {task.start_time ? `(${task.start_time})` : ''}
                                 </div>
                               )}
 
-                              {/* Recurring Indicators */}
                               {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
                                 let shouldShow = false;
 
@@ -632,70 +660,38 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Recurrence Settings in Edit */}
+              {/* Date & Time Grid */}
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                 <div>
-                  <label className="text-xs font-semibold text-slate-600">Frequency</label>
-                  <select
-                    value={activeTask.frequency}
-                    onChange={(e) => setActiveTask({ ...activeTask, frequency: e.target.value as TaskFrequency })}
-                    className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none"
-                  >
-                    <option value="once">Once</option>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-
-                {activeTask.frequency === 'weekly' && (
-                  <div>
-                    <label className="text-xs font-semibold text-slate-600">Which Day?</label>
-                    <select
-                      value={activeTask.recurring_day || 'Monday'}
-                      onChange={(e) => setActiveTask({ ...activeTask, recurring_day: e.target.value })}
-                      className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none"
-                    >
-                      {DAYS_OF_WEEK.map(day => <option key={day} value={day}>{day}</option>)}
-                    </select>
-                  </div>
-                )}
-
-                {activeTask.frequency === 'monthly' && (
-                  <div>
-                    <label className="text-xs font-semibold text-slate-600">Day of the Month (1-31)</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={activeTask.recurring_date || 1}
-                      onChange={(e) => setActiveTask({ ...activeTask, recurring_date: Number(e.target.value) })}
-                      className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs font-semibold text-slate-600">Start Date</label>
+                  <label className="text-[11px] font-semibold text-slate-600">Start Date & Time (Optional)</label>
                   <input
                     type="date"
                     required
                     value={activeTask.start_date}
                     onChange={(e) => setActiveTask({ ...activeTask, start_date: e.target.value })}
-                    className="w-full px-3 py-1.5 border rounded-lg text-xs mt-1 outline-none"
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={activeTask.start_time || ''}
+                    onChange={(e) => setActiveTask({ ...activeTask, start_time: e.target.value })}
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-600">Due Date</label>
+                  <label className="text-[11px] font-semibold text-slate-600">Due Date & Time (Optional)</label>
                   <input
                     type="date"
                     required
                     value={activeTask.due_date}
                     onChange={(e) => setActiveTask({ ...activeTask, due_date: e.target.value })}
-                    className="w-full px-3 py-1.5 border rounded-lg text-xs mt-1 outline-none"
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={activeTask.due_time || ''}
+                    onChange={(e) => setActiveTask({ ...activeTask, due_time: e.target.value })}
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
                   />
                 </div>
               </div>
@@ -804,6 +800,7 @@ export default function Dashboard() {
                 </select>
               </div>
 
+              {/* Dynamic Frequency Fields */}
               {formData.frequency === 'weekly' && (
                 <div className="bg-slate-50 p-2 rounded-lg border">
                   <label className="text-[11px] font-semibold text-slate-600">Select Day of the Week</label>
@@ -831,25 +828,40 @@ export default function Dashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-2">
+              {/* Start/Due Date & Time Grid */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg border">
                 <div>
-                  <label className="text-[11px] text-slate-500">Start Date</label>
+                  <label className="text-[11px] text-slate-500 font-semibold">Start Date & Time</label>
                   <input
                     type="date"
                     required
                     value={formData.start_date}
                     onChange={e => setFormData({ ...formData, start_date: e.target.value })}
-                    className="w-full px-3 py-1.5 border rounded-lg text-sm outline-none"
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={formData.start_time}
+                    onChange={e => setFormData({ ...formData, start_time: e.target.value })}
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
+                    placeholder="Time (Optional)"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-500">Due Date</label>
+                  <label className="text-[11px] text-slate-500 font-semibold">Due Date & Time</label>
                   <input
                     type="date"
                     required
                     value={formData.due_date}
                     onChange={e => setFormData({ ...formData, due_date: e.target.value })}
-                    className="w-full px-3 py-1.5 border rounded-lg text-sm outline-none"
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={formData.due_time}
+                    onChange={e => setFormData({ ...formData, due_time: e.target.value })}
+                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
+                    placeholder="Time (Optional)"
                   />
                 </div>
               </div>
