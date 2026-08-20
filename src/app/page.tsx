@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { format, addDays, startOfWeek, isToday, parseISO, getDay, getDate, differenceInMinutes, startOfDay } from 'date-fns';
-import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell, CheckCircle2, Video, Eye, EyeOff, Users, Mail, Edit2 } from 'lucide-react';
 
 interface Department {
   id: string;
@@ -14,6 +14,7 @@ interface Department {
 type TaskStatus = 'Open' | 'In Progress' | 'Pending' | 'Completed' | 'Resolved' | 'Blocked' | 'Cancelled';
 type TaskPriority = 'Crit' | 'High' | 'Medi' | 'Low';
 type TaskFrequency = 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+type EntryType = 'task' | 'event';
 
 interface Task {
   id: string;
@@ -21,6 +22,9 @@ interface Task {
   department_id: string;
   priority: TaskPriority;
   status: TaskStatus;
+  type: EntryType;
+  meet_link?: string | null;
+  participants: string[];
   start_date?: string | null;
   due_date: string;
   start_time?: string | null;
@@ -83,12 +87,12 @@ export default function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [savedEmails, setSavedEmails] = useState<string[]>([]);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [mounted, setMounted] = useState(false);
   
   const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set());
   const soundPlayedRef = useRef<Set<string>>(new Set());
-
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const enableAudio = useCallback(() => {
@@ -129,30 +133,42 @@ export default function Dashboard() {
         osc.stop(ctx.currentTime + idx * 0.12 + 0.65);
       });
     } catch (e) {
-      console.error("Audio playback error:", e);
+      console.error("Audio error:", e);
     }
   }, []);
 
+  // Filters
   const [search, setSearch] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [filterFromDate, setFilterFromDate] = useState('');
   const [filterToDate, setFilterToDate] = useState('');
   const [activeQuickFilter, setActiveQuickFilter] = useState<'today' | 'overdue' | null>(null);
+  const [showCompletedCancelled, setShowCompletedCancelled] = useState(false);
 
+  // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
+  // Category State
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptColor, setNewDeptColor] = useState('#2563eb');
+  const [editingDeptId, setEditingDeptId] = useState<string | null>(null);
+  const [editingDeptName, setEditingDeptName] = useState('');
+  const [editingDeptColor, setEditingDeptColor] = useState('#2563eb');
+
+  const [emailInput, setEmailInput] = useState('');
   
   const [formData, setFormData] = useState<{
     title: string;
     department_id: string;
     priority: TaskPriority;
     status: TaskStatus;
+    type: EntryType;
+    meet_link: string;
+    participants: string[];
     frequency: TaskFrequency;
     recurring_day: string;
     recurring_date: number;
@@ -166,6 +182,9 @@ export default function Dashboard() {
     department_id: '',
     priority: 'Medi',
     status: 'Open',
+    type: 'task',
+    meet_link: '',
+    participants: ['vertexsolutionsptb@gmail.com'],
     frequency: 'once',
     recurring_day: 'Monday',
     recurring_date: 1,
@@ -233,7 +252,12 @@ export default function Dashboard() {
   }, []);
 
   const loadAllData = async () => {
-    await Promise.all([fetchDepartments(), fetchTasks(), fetchHistory()]);
+    await Promise.all([fetchDepartments(), fetchTasks(), fetchHistory(), fetchSavedEmails()]);
+  };
+
+  const fetchSavedEmails = async () => {
+    const { data } = await supabase.from('saved_participants').select('email');
+    if (data) setSavedEmails(data.map((d) => d.email));
   };
 
   const fetchDepartments = async () => {
@@ -248,7 +272,15 @@ export default function Dashboard() {
 
   const fetchTasks = async () => {
     const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
-    if (data) setTasks(data as Task[]);
+    if (data) {
+      setTasks(
+        data.map((t: any) => ({
+          ...t,
+          type: t.type || 'task',
+          participants: t.participants || ['vertexsolutionsptb@gmail.com'],
+        }))
+      );
+    }
   };
 
   const fetchHistory = async () => {
@@ -256,16 +288,30 @@ export default function Dashboard() {
     if (data) setHistory(data);
   };
 
+  const saveNewEmails = async (emails: string[]) => {
+    for (const email of emails) {
+      if (email.trim() && !savedEmails.includes(email.trim())) {
+        await supabase.from('saved_participants').insert([{ email: email.trim() }]);
+      }
+    }
+    fetchSavedEmails();
+  };
+
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.title.trim()) return alert('Please enter a task title');
+    if (!formData.title.trim()) return alert('Please enter a title');
     if (!formData.department_id) return alert('Please select a Category');
+
+    const participantsList = Array.from(new Set([...formData.participants, 'vertexsolutionsptb@gmail.com']));
 
     const payload = {
       title: formData.title,
       department_id: formData.department_id,
       priority: formData.priority,
       status: formData.status,
+      type: formData.type,
+      meet_link: formData.type === 'event' ? formData.meet_link : null,
+      participants: participantsList,
       frequency: formData.frequency,
       recurring_day: formData.frequency === 'weekly' ? formData.recurring_day : null,
       recurring_date: formData.frequency === 'monthly' ? Number(formData.recurring_date) : null,
@@ -279,13 +325,22 @@ export default function Dashboard() {
 
     const { data, error } = await supabase.from('tasks').insert([payload]).select();
     if (error) {
-      alert('Error saving task: ' + error.message);
+      alert('Error saving: ' + error.message);
     } else {
       if (data && data[0]) {
-        await supabase.from('task_history').insert([{ task_id: data[0].id, action: `Created task: "${formData.title}"` }]);
+        await supabase.from('task_history').insert([{ task_id: data[0].id, action: `Created ${formData.type}: "${formData.title}"` }]);
       }
+      await saveNewEmails(participantsList);
       setShowAddModal(false);
-      setFormData((prev) => ({ ...prev, title: '', description: '', start_time: '', due_time: '' }));
+      setFormData((prev) => ({
+        ...prev,
+        title: '',
+        description: '',
+        start_time: '',
+        due_time: '',
+        meet_link: '',
+        participants: ['vertexsolutionsptb@gmail.com'],
+      }));
       fetchTasks();
       fetchHistory();
     }
@@ -295,7 +350,7 @@ export default function Dashboard() {
     e.stopPropagation();
     const { error } = await supabase.from('tasks').update({ status: 'Completed' }).eq('id', taskId);
     if (!error) {
-      await supabase.from('task_history').insert([{ task_id: taskId, action: `Completed task: "${title}"` }]);
+      await supabase.from('task_history').insert([{ task_id: taskId, action: `Completed: "${title}"` }]);
       fetchTasks();
       fetchHistory();
     }
@@ -305,11 +360,16 @@ export default function Dashboard() {
     e.preventDefault();
     if (!activeTask) return;
 
+    const participantsList = Array.from(new Set([...activeTask.participants, 'vertexsolutionsptb@gmail.com']));
+
     const { error } = await supabase.from('tasks').update({
       title: activeTask.title,
       department_id: activeTask.department_id,
       priority: activeTask.priority,
       status: activeTask.status,
+      type: activeTask.type,
+      meet_link: activeTask.type === 'event' ? activeTask.meet_link : null,
+      participants: participantsList,
       frequency: activeTask.frequency,
       recurring_day: activeTask.frequency === 'weekly' ? activeTask.recurring_day : null,
       recurring_date: activeTask.frequency === 'monthly' ? Number(activeTask.recurring_date) : null,
@@ -321,9 +381,10 @@ export default function Dashboard() {
     }).eq('id', activeTask.id);
 
     if (error) {
-      alert('Error updating task: ' + error.message);
+      alert('Error updating: ' + error.message);
     } else {
-      await supabase.from('task_history').insert([{ task_id: activeTask.id, action: `Updated task: "${activeTask.title}" (${activeTask.status})` }]);
+      await supabase.from('task_history').insert([{ task_id: activeTask.id, action: `Updated: "${activeTask.title}" (${activeTask.status})` }]);
+      await saveNewEmails(participantsList);
       setActiveTask(null);
       fetchTasks();
       fetchHistory();
@@ -334,13 +395,14 @@ export default function Dashboard() {
     if (!confirm(`Are you sure you want to delete "${title}"?`)) return;
     const { error } = await supabase.from('tasks').delete().eq('id', taskId);
     if (!error) {
-      await supabase.from('task_history').insert([{ action: `Deleted task: "${title}"` }]);
+      await supabase.from('task_history').insert([{ action: `Deleted: "${title}"` }]);
       setActiveTask(null);
       fetchTasks();
       fetchHistory();
     }
   };
 
+  // Category Actions
   const handleAddDepartment = async () => {
     if (!newDeptName.trim()) return alert('Enter a category name');
     const { error } = await supabase.from('departments').insert([{ name: newDeptName.trim(), color: newDeptColor }]);
@@ -352,6 +414,34 @@ export default function Dashboard() {
     }
   };
 
+  const handleUpdateDepartment = async (id: string) => {
+    if (!editingDeptName.trim()) return alert('Category name cannot be empty');
+    const { error } = await supabase.from('departments').update({ name: editingDeptName.trim(), color: editingDeptColor }).eq('id', id);
+    if (error) {
+      alert('Error updating category: ' + error.message);
+    } else {
+      setEditingDeptId(null);
+      fetchDepartments();
+    }
+  };
+
+  const handleDeleteDepartment = async (id: string, name: string) => {
+    // Check if category has tasks
+    const hasTasks = tasks.some((t) => t.department_id === id);
+    if (hasTasks) {
+      return alert(`Cannot delete "${name}". There are tasks associated with this category. Please reassign or delete the tasks first.`);
+    }
+
+    if (!confirm(`Are you sure you want to delete category "${name}"?`)) return;
+
+    const { error } = await supabase.from('departments').delete().eq('id', id);
+    if (error) {
+      alert('Error deleting category: ' + error.message);
+    } else {
+      fetchDepartments();
+    }
+  };
+
   const handleResetFilters = () => {
     setSearch('');
     setSelectedDept('All');
@@ -359,6 +449,7 @@ export default function Dashboard() {
     setFilterFromDate('');
     setFilterToDate('');
     setActiveQuickFilter(null);
+    setShowCompletedCancelled(false);
   };
 
   const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date || t.due_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
@@ -369,6 +460,9 @@ export default function Dashboard() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
+      if (!showCompletedCancelled && (task.status === 'Completed' || task.status === 'Cancelled' || task.status === 'Resolved')) {
+        return false;
+      }
       if (search && !task.title.toLowerCase().includes(search.toLowerCase()) && !(task.description || '').toLowerCase().includes(search.toLowerCase())) return false;
       if (selectedDept !== 'All' && task.department_id !== selectedDept) return false;
       if (selectedStatus !== 'All' && task.status !== selectedStatus) return false;
@@ -381,7 +475,7 @@ export default function Dashboard() {
 
       return true;
     });
-  }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate]);
+  }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate, showCompletedCancelled]);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative" onClick={enableAudio}>
@@ -393,7 +487,7 @@ export default function Dashboard() {
             key={reminder.task.id}
             onClick={() => setActiveTask(reminder.task)}
             className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-2xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 active:scale-98 animate-in slide-in-from-right-10 group ${
-              reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950' : 'bg-amber-50/95 border-amber-300 text-amber-950'
+              reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500' : 'bg-amber-50/95 border-amber-300 text-amber-950'
             }`}
           >
             <div className={`p-2.5 rounded-full shrink-0 shadow-sm transition-transform group-hover:scale-110 ${reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-amber-500 text-white animate-pulse'}`}>
@@ -403,11 +497,11 @@ export default function Dashboard() {
             <div className="flex-1 overflow-hidden">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">{reminder.task.title}</h4>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800'}`}>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${reminder.isOverdue ? 'bg-rose-200 text-rose-800 font-extrabold' : 'bg-amber-200 text-amber-800'}`}>
                   {reminder.task.due_time || 'Today'}
                 </span>
               </div>
-              <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>{reminder.isOverdue ? '🚨 ' : '⏳ '}{reminder.timeLabel}</p>
+              <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700 font-extrabold' : 'text-amber-800'}`}>{reminder.isOverdue ? '🚨 OVERDUE: ' : '⏳ '}{reminder.timeLabel}</p>
               <div className="flex items-center justify-between mt-2 pt-1 border-t border-black/5">
                 <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">👆 Click to edit</span>
                 <button onClick={(e) => handleQuickComplete(reminder.task.id, reminder.task.title, e)} className="flex items-center gap-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-md shadow-xs transition">
@@ -439,6 +533,16 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center flex-wrap gap-2.5">
+            <button
+              onClick={() => setShowCompletedCancelled((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
+                showCompletedCancelled ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs' : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              {showCompletedCancelled ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {showCompletedCancelled ? 'Hide Done/Cancelled' : 'Show Done/Cancelled'}
+            </button>
+
             <button onClick={() => setActiveQuickFilter((prev) => (prev === 'today' ? null : 'today'))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${activeQuickFilter === 'today' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
               <Clock className="w-3.5 h-3.5" /> Today: {todayCount}
             </button>
@@ -475,13 +579,13 @@ export default function Dashboard() {
               <input type="date" value={filterToDate} onChange={(e) => setFilterToDate(e.target.value)} className="bg-transparent text-xs outline-none cursor-pointer text-slate-700" />
             </div>
 
-            {(search || selectedDept !== 'All' || selectedStatus !== 'All' || filterFromDate || filterToDate || activeQuickFilter) && (
+            {(search || selectedDept !== 'All' || selectedStatus !== 'All' || filterFromDate || filterToDate || activeQuickFilter || showCompletedCancelled) && (
               <button onClick={handleResetFilters} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition" title="Reset Filters"><RotateCcw className="w-4 h-4" /></button>
             )}
 
             <button onClick={() => setShowDeptModal(true)} className="px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-xs font-medium transition">Categories</button>
             <button onClick={() => setShowHistoryModal(true)} className="p-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-slate-600 transition" title="History Log"><History className="w-4 h-4" /></button>
-            <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"><Plus className="w-4 h-4" /> Add Task</button>
+            <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"><Plus className="w-4 h-4" /> Add Task / Event</button>
           </div>
         </div>
       </header>
@@ -514,10 +618,12 @@ export default function Dashboard() {
           </div>
 
           {departments.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 text-sm">No categories found. Click <b>Categories</b> above or run the SQL script to initialize.</div>
+            <div className="p-8 text-center text-slate-400 text-sm">No categories found. Click <b>Categories</b> above to initialize.</div>
           ) : (
             departments
               .filter((dept) => selectedDept === 'All' || selectedDept === dept.id)
+              // 2. Hide categories that have no active tasks
+              .filter((dept) => filteredTasks.some((t) => t.department_id === dept.id))
               .map((dept) => {
                 const deptTasks = filteredTasks.filter((t) => t.department_id === dept.id);
 
@@ -531,77 +637,133 @@ export default function Dashboard() {
                       <div className="col-span-21"></div>
                     </div>
 
-                    {deptTasks.length === 0 ? (
-                      <div className="py-2 px-6 text-xs text-slate-400 italic">No tasks in this category</div>
-                    ) : (
-                      deptTasks.map((task) => {
-                        const effectiveStart = task.start_date || task.due_date;
-                        const startParsed = startOfDay(parseISO(effectiveStart));
-                        const endParsed = startOfDay(parseISO(task.due_date));
-                        
-                        const rawStartDay = (startParsed.getTime() - timelineStart.getTime()) / 86400000;
-                        const rawEndDay = (endParsed.getTime() - timelineStart.getTime()) / 86400000;
+                    {deptTasks.map((task) => {
+                      const isTaskOverdue = parseISO(task.due_date) < new Date() && task.status !== 'Completed' && task.status !== 'Resolved' && task.status !== 'Cancelled';
+                      const effectiveStart = task.start_date || task.due_date;
+                      const startParsed = startOfDay(parseISO(effectiveStart));
+                      const endParsed = startOfDay(parseISO(task.due_date));
+                      
+                      const rawStartDay = (startParsed.getTime() - timelineStart.getTime()) / 86400000;
+                      const rawEndDay = (endParsed.getTime() - timelineStart.getTime()) / 86400000;
 
-                        let startFraction = 0;
-                        if (task.start_time) {
-                          const [sh, sm] = task.start_time.split(':').map(Number);
-                          startFraction = (sh * 60 + sm) / 1440;
-                        }
+                      let startFraction = 0;
+                      if (task.start_time) {
+                        const [sh, sm] = task.start_time.split(':').map(Number);
+                        startFraction = (sh * 60 + sm) / 1440;
+                      }
 
-                        let endFraction = 1;
-                        if (task.due_time) {
-                          const [dh, dm] = task.due_time.split(':').map(Number);
-                          endFraction = (dh * 60 + dm) / 1440;
-                        }
+                      let endFraction = 1;
+                      if (task.due_time) {
+                        const [dh, dm] = task.due_time.split(':').map(Number);
+                        endFraction = (dh * 60 + dm) / 1440;
+                      }
 
-                        const exactStartPos = (rawStartDay + startFraction) * 60;
-                        const exactEndPos = (rawEndDay + endFraction) * 60;
-                        const exactWidth = Math.max(8, exactEndPos - exactStartPos);
-                        const isVisible = (rawEndDay + 1) >= 0 && rawStartDay < 21;
-                        const isNarrow = exactWidth < 80;
+                      const exactStartPos = (rawStartDay + startFraction) * 60;
+                      const exactEndPos = (rawEndDay + endFraction) * 60;
+                      const exactWidth = Math.max(8, exactEndPos - exactStartPos);
+                      const isVisible = (rawEndDay + 1) >= 0 && rawStartDay < 21;
+                      const isNarrow = exactWidth < 80;
 
-                        return (
-                          <div key={task.id} onClick={() => setActiveTask(task)} className="grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 cursor-pointer group transition relative">
-                            <div className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                              <div className="flex flex-col truncate pr-2">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-xs font-semibold text-slate-800 truncate group-hover:text-blue-600 transition" title={task.title}>{task.title}</span>
-                                  {task.frequency !== 'once' && (
-                                    <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded flex items-center gap-0.5 border"><Repeat className="w-2.5 h-2.5" />{task.frequency === 'weekly' ? task.recurring_day?.slice(0, 3) : task.frequency === 'monthly' ? `${task.recurring_date}th` : task.frequency}</span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {task.start_time && (
-                                    <span className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5"><Clock className="w-2.5 h-2.5" /> {task.start_time} {task.due_time ? `- ${task.due_time}` : ''}</span>
-                                  )}
-                                  {task.description && <span className="text-[10px] text-slate-400 truncate max-w-[150px]">{task.description}</span>}
-                                </div>
+                      return (
+                        <div key={task.id} onClick={() => setActiveTask(task)} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 cursor-pointer group transition relative ${isTaskOverdue ? 'bg-rose-50/40' : ''}`}>
+                          <div className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                            <div className="flex flex-col truncate pr-2">
+                              <div className="flex items-center gap-1.5">
+                                {task.type === 'event' && <Video className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
+                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${isTaskOverdue ? 'text-rose-700 font-bold' : 'text-slate-800'}`} title={task.title}>
+                                  {task.title}
+                                </span>
+                                {task.frequency !== 'once' && (
+                                  <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded flex items-center gap-0.5 border"><Repeat className="w-2.5 h-2.5" />{task.frequency === 'weekly' ? task.recurring_day?.slice(0, 3) : task.frequency === 'monthly' ? `${task.recurring_date}th` : task.frequency}</span>
+                                )}
                               </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${STATUS_STYLES[task.status]}`}>{task.status}</span>
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
+                              <div className="flex items-center gap-2">
+                                {task.start_time && (
+                                  <span className="text-[10px] text-blue-600 font-medium flex items-center gap-0.5"><Clock className="w-2.5 h-2.5" /> {task.start_time} {task.due_time ? `- ${task.due_time}` : ''}</span>
+                                )}
+                                {task.participants && task.participants.length > 0 && (
+                                  <span className="text-[10px] text-slate-500 font-medium flex items-center gap-0.5">
+                                    <Users className="w-2.5 h-2.5" /> {task.participants.length}
+                                  </span>
+                                )}
+                                {task.description && <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{task.description}</span>}
                               </div>
                             </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${isTaskOverdue ? 'bg-rose-100 text-rose-800 border-rose-300 font-bold' : STATUS_STYLES[task.status]}`}>
+                                {isTaskOverdue ? 'Overdue' : task.status}
+                              </span>
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
+                            </div>
+                          </div>
 
-                            <div className="col-span-21 relative h-full flex items-center">
-                              {/* 1. ONCE TASKS TIMELINE BAR */}
-                              {task.frequency === 'once' && isVisible && (
-                                <>
+                          <div className="col-span-21 relative h-full flex items-center">
+                            {/* 1. ONCE TASKS TIMELINE BAR */}
+                            {task.frequency === 'once' && isVisible && (
+                              <>
+                                <div
+                                  style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
+                                  className={`absolute h-6 rounded-md px-1.5 flex items-center shadow-xs transition z-10 ${
+                                    isTaskOverdue 
+                                      ? 'bg-rose-600 text-white ring-2 ring-rose-400 animate-pulse' 
+                                      : task.status === 'Completed' || task.status === 'Resolved' 
+                                      ? 'bg-emerald-500 text-white' 
+                                      : task.status === 'Blocked' 
+                                      ? 'bg-rose-500 text-white' 
+                                      : task.type === 'event'
+                                      ? 'bg-violet-600 text-white hover:ring-2 hover:ring-violet-300'
+                                      : 'bg-indigo-600 text-white hover:ring-2 hover:ring-indigo-300'
+                                  }`}
+                                  title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
+                                >
+                                  {!isNarrow && (
+                                    <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-semibold">
+                                      <span className="truncate pr-1">{task.title}</span>
+                                      {(task.start_time || task.due_time) && (
+                                        <span className="px-1 py-0.2 bg-black/20 text-[9px] rounded whitespace-nowrap shrink-0">
+                                          {task.due_time || task.start_time}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {isNarrow && (
+                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${isTaskOverdue ? 'text-rose-700 font-bold' : 'text-slate-800'}`}>
+                                    <span>{task.title}</span>
+                                    {(task.start_time || task.due_time) && (
+                                      <span className={`px-1.5 py-0.5 text-[10px] rounded-full font-bold ${isTaskOverdue ? 'bg-rose-200 text-rose-900' : 'bg-slate-200 text-slate-700'}`}>
+                                        {task.start_time ? task.start_time : ''}
+                                        {task.start_time && task.due_time ? ' - ' : ''}
+                                        {task.due_time ? task.due_time : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            {/* 2. RECURRING TASKS TIMELINE BAR */}
+                            {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
+                              let shouldShow = false;
+                              if (task.frequency === 'daily') shouldShow = true;
+                              else if (task.frequency === 'weekly' && task.recurring_day) shouldShow = DAYS_OF_WEEK[getDay(dayDate)] === task.recurring_day;
+                              else if (task.frequency === 'monthly' && task.recurring_date) shouldShow = getDate(dayDate) === Number(task.recurring_date);
+                              if (!shouldShow) return null;
+
+                              const recStartPos = (dayIdx + startFraction) * 60;
+                              const recEndPos = (dayIdx + endFraction) * 60;
+                              const recWidth = Math.max(8, recEndPos - recStartPos);
+                              const recIsNarrow = recWidth < 80;
+
+                              return (
+                                <React.Fragment key={dayIdx}>
                                   <div
-                                    style={{ 
-                                      left: `${exactStartPos}px`, 
-                                      width: `${exactWidth}px` 
-                                    }}
-                                    className={`absolute h-6 rounded-md px-1.5 flex items-center shadow-xs transition z-10 ${
-                                      task.status === 'Completed' || task.status === 'Resolved' 
-                                        ? 'bg-emerald-500 text-white' 
-                                        : task.status === 'Blocked' 
-                                        ? 'bg-rose-500 text-white' 
-                                        : 'bg-indigo-600 text-white hover:ring-2 hover:ring-indigo-300'
-                                    }`}
-                                    title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
+                                    style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
+                                    className="absolute h-6 rounded-md px-1.5 flex items-center bg-blue-600 text-white shadow-xs z-10 transition hover:ring-2 hover:ring-blue-300"
+                                    title={`Recurring: ${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
                                   >
-                                    {!isNarrow && (
+                                    {!recIsNarrow && (
                                       <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-semibold">
                                         <span className="truncate pr-1">{task.title}</span>
                                         {(task.start_time || task.due_time) && (
@@ -613,77 +775,23 @@ export default function Dashboard() {
                                     )}
                                   </div>
 
-                                  {isNarrow && (
-                                    <div 
-                                      style={{ left: `${exactEndPos + 4}px` }} 
-                                      className="absolute flex items-center gap-1.5 text-xs font-semibold text-slate-800 whitespace-nowrap z-0 pointer-events-none"
-                                    >
-                                      <span>{task.title}</span>
+                                  {recIsNarrow && (
+                                    <div style={{ left: `${recEndPos + 4}px` }} className="absolute flex items-center gap-1 text-[11px] font-semibold text-slate-800 whitespace-nowrap z-0 pointer-events-none">
+                                      <span className="truncate max-w-[80px]">{task.title}</span>
                                       {(task.start_time || task.due_time) && (
-                                        <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 text-[10px] rounded-full font-bold">
-                                          {task.start_time ? task.start_time : ''}
-                                          {task.start_time && task.due_time ? ' - ' : ''}
-                                          {task.due_time ? task.due_time : ''}
+                                        <span className="px-1.5 py-0.2 bg-blue-100 text-blue-900 text-[9px] rounded-full font-bold">
+                                          {task.due_time || task.start_time}
                                         </span>
                                       )}
                                     </div>
                                   )}
-                                </>
-                              )}
-
-                              {/* 2. RECURRING TASKS (Daily, Weekly, Monthly) TIMELINE BAR WITH EXACT TIME */}
-                              {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
-                                let shouldShow = false;
-                                if (task.frequency === 'daily') shouldShow = true;
-                                else if (task.frequency === 'weekly' && task.recurring_day) shouldShow = DAYS_OF_WEEK[getDay(dayDate)] === task.recurring_day;
-                                else if (task.frequency === 'monthly' && task.recurring_date) shouldShow = getDate(dayDate) === Number(task.recurring_date);
-                                if (!shouldShow) return null;
-
-                                const recStartPos = (dayIdx + startFraction) * 60;
-                                const recEndPos = (dayIdx + endFraction) * 60;
-                                const recWidth = Math.max(8, recEndPos - recStartPos);
-                                const recIsNarrow = recWidth < 80;
-
-                                return (
-                                  <React.Fragment key={dayIdx}>
-                                    <div
-                                      style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
-                                      className="absolute h-6 rounded-md px-1.5 flex items-center bg-blue-600 text-white shadow-xs z-10 transition hover:ring-2 hover:ring-blue-300"
-                                      title={`Recurring: ${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
-                                    >
-                                      {!recIsNarrow && (
-                                        <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-semibold">
-                                          <span className="truncate pr-1">{task.title}</span>
-                                          {(task.start_time || task.due_time) && (
-                                            <span className="px-1 py-0.2 bg-black/20 text-[9px] rounded whitespace-nowrap shrink-0">
-                                              {task.due_time || task.start_time}
-                                            </span>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-
-                                    {recIsNarrow && (
-                                      <div 
-                                        style={{ left: `${recEndPos + 4}px` }} 
-                                        className="absolute flex items-center gap-1 text-[11px] font-semibold text-slate-800 whitespace-nowrap z-0 pointer-events-none"
-                                      >
-                                        <span className="truncate max-w-[80px]">{task.title}</span>
-                                        {(task.start_time || task.due_time) && (
-                                          <span className="px-1.5 py-0.2 bg-blue-100 text-blue-900 text-[9px] rounded-full font-bold">
-                                            {task.due_time || task.start_time}
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </React.Fragment>
-                                );
-                              })}
-                            </div>
+                                </React.Fragment>
+                              );
+                            })}
                           </div>
-                        );
-                      })
-                    )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })
@@ -694,21 +802,96 @@ export default function Dashboard() {
       {/* 3. TASK DETAILS & EDIT MODAL */}
       {activeTask && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-100 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b pb-3 mb-4">
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-bold px-2 py-0.5 rounded border ${STATUS_STYLES[activeTask.status]}`}>{activeTask.status}</span>
-                <h2 className="text-base font-bold text-slate-800">Edit Task</h2>
+                <h2 className="text-base font-bold text-slate-800">Edit {activeTask.type === 'event' ? 'Event' : 'Task'}</h2>
               </div>
               <button onClick={() => setActiveTask(null)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
             </div>
 
             <form onSubmit={handleUpdateTask} className="space-y-3">
+              <div className="flex bg-slate-100 p-1 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setActiveTask({ ...activeTask, type: 'task' })}
+                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${activeTask.type === 'task' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-500'}`}
+                >
+                  Task
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTask({ ...activeTask, type: 'event' })}
+                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${activeTask.type === 'event' ? 'bg-white shadow-xs text-violet-600' : 'text-slate-500'}`}
+                >
+                  Event
+                </button>
+              </div>
+
               <input
-                required type="text" placeholder="Task Name" value={activeTask.title}
+                required type="text" placeholder="Title" value={activeTask.title}
                 onChange={(e) => setActiveTask({ ...activeTask, title: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg text-sm outline-none"
               />
+
+              {activeTask.type === 'event' && (
+                <div className="relative">
+                  <Video className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="url"
+                    placeholder="Google Meet Link (https://meet.google.com/...)"
+                    value={activeTask.meet_link || ''}
+                    onChange={(e) => setActiveTask({ ...activeTask, meet_link: e.target.value })}
+                    className="w-full pl-9 pr-3 py-2 border rounded-lg text-xs outline-none bg-violet-50/50"
+                  />
+                </div>
+              )}
+
+              {/* Participants Section */}
+              <div className="border rounded-lg p-2.5 bg-slate-50 space-y-2">
+                <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5 text-blue-600" /> Email Participants (Mandatory: vertexsolutionsptb@gmail.com)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    list="saved-emails"
+                    placeholder="Add participant email..."
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="flex-1 px-2.5 py-1 text-xs border rounded-lg bg-white outline-none"
+                  />
+                  <datalist id="saved-emails">
+                    {savedEmails.map((em) => <option key={em} value={em} />)}
+                  </datalist>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (emailInput.trim() && !activeTask.participants.includes(emailInput.trim())) {
+                        setActiveTask({ ...activeTask, participants: [...activeTask.participants, emailInput.trim()] });
+                        setEmailInput('');
+                      }
+                    }}
+                    className="px-3 py-1 bg-slate-800 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                  {activeTask.participants?.map((pEmail) => (
+                    <span key={pEmail} className={`px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1 shadow-2xs border ${pEmail === 'vertexsolutionsptb@gmail.com' ? 'bg-blue-100 text-blue-800 font-bold border-blue-300' : 'bg-white text-slate-700'}`}>
+                      {pEmail}
+                      {pEmail !== 'vertexsolutionsptb@gmail.com' && (
+                        <X
+                          className="w-3 h-3 cursor-pointer text-slate-400 hover:text-red-600"
+                          onClick={() => setActiveTask({ ...activeTask, participants: activeTask.participants.filter((e) => e !== pEmail) })}
+                        />
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
 
               <textarea
                 rows={2} placeholder="Description / Notes (Optional)" value={activeTask.description || ''}
@@ -824,13 +1007,89 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* 4. CREATE TASK MODAL */}
+      {/* 4. CREATE TASK / EVENT MODAL */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-base font-bold text-slate-800 mb-3">Add New Task</h2>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-base font-bold text-slate-800 mb-3">Add New Task / Event</h2>
             <form onSubmit={handleAddTask} className="space-y-3">
-              <input required type="text" placeholder="Task Name" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm outline-none" />
+              <div className="flex bg-slate-100 p-1 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, type: 'task' })}
+                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${formData.type === 'task' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-500'}`}
+                >
+                  Task
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, type: 'event' })}
+                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${formData.type === 'event' ? 'bg-white shadow-xs text-violet-600' : 'text-slate-500'}`}
+                >
+                  Event
+                </button>
+              </div>
+
+              <input required type="text" placeholder="Title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm outline-none" />
+
+              {formData.type === 'event' && (
+                <div className="relative">
+                  <Video className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="url"
+                    placeholder="Google Meet Link (https://meet.google.com/...)"
+                    value={formData.meet_link}
+                    onChange={(e) => setFormData({ ...formData, meet_link: e.target.value })}
+                    className="w-full pl-9 pr-3 py-2 border rounded-lg text-xs outline-none bg-violet-50/50"
+                  />
+                </div>
+              )}
+
+              {/* Participants Section */}
+              <div className="border rounded-lg p-2.5 bg-slate-50 space-y-2">
+                <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5 text-blue-600" /> Email Participants (Mandatory: vertexsolutionsptb@gmail.com)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    list="saved-emails"
+                    placeholder="Add participant email..."
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="flex-1 px-2.5 py-1 text-xs border rounded-lg bg-white outline-none"
+                  />
+                  <datalist id="saved-emails">
+                    {savedEmails.map((em) => <option key={em} value={em} />)}
+                  </datalist>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (emailInput.trim() && !formData.participants.includes(emailInput.trim())) {
+                        setFormData({ ...formData, participants: [...formData.participants, emailInput.trim()] });
+                        setEmailInput('');
+                      }
+                    }}
+                    className="px-3 py-1 bg-slate-800 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                  {formData.participants.map((pEmail) => (
+                    <span key={pEmail} className={`px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1 shadow-2xs border ${pEmail === 'vertexsolutionsptb@gmail.com' ? 'bg-blue-100 text-blue-800 font-bold border-blue-300' : 'bg-white text-slate-700'}`}>
+                      {pEmail}
+                      {pEmail !== 'vertexsolutionsptb@gmail.com' && (
+                        <X
+                          className="w-3 h-3 cursor-pointer text-slate-400 hover:text-red-600"
+                          onClick={() => setFormData({ ...formData, participants: formData.participants.filter((e) => e !== pEmail) })}
+                        />
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
               <textarea rows={2} placeholder="Description / Notes (Optional)" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm outline-none resize-none" />
 
               <div className="grid grid-cols-2 gap-2">
@@ -931,31 +1190,94 @@ export default function Dashboard() {
 
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
-                <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg font-medium">Save Task</button>
+                <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg font-medium">Save Entry</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* 5. DEPARTMENT MASTER MODAL */}
+      {/* 5. DEPARTMENT MASTER MODAL (With Edit & Delete Safety) */}
       {showDeptModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
             <h2 className="text-base font-bold text-slate-800 mb-3">Categories Master</h2>
-            <div className="flex gap-2 mb-3">
-              <input type="text" placeholder="Category Name" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="flex-1 px-3 py-1.5 border rounded-lg text-sm outline-none" />
+            
+            <div className="flex gap-2 mb-4">
+              <input type="text" placeholder="New Category Name" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="flex-1 px-3 py-1.5 border rounded-lg text-sm outline-none" />
               <input type="color" value={newDeptColor} onChange={(e) => setNewDeptColor(e.target.value)} className="w-10 h-9 p-0.5 border rounded-lg cursor-pointer" />
-              <button onClick={handleAddDepartment} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium">Add</button>
+              <button onClick={handleAddDepartment} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Add</button>
             </div>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto mb-4 border-t pt-2">
-              {departments.map((d) => (
-                <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 rounded-md">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color }}></div>
-                  <span className="text-sm font-medium text-slate-700">{d.name}</span>
-                </div>
-              ))}
+
+            <div className="space-y-2 max-h-60 overflow-y-auto mb-4 border-t pt-3">
+              {departments.map((d) => {
+                const taskCount = tasks.filter((t) => t.department_id === d.id).length;
+
+                return (
+                  <div key={d.id} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                    {editingDeptId === d.id ? (
+                      <div className="flex items-center gap-2 flex-1 mr-2">
+                        <input
+                          type="text"
+                          value={editingDeptName}
+                          onChange={(e) => setEditingDeptName(e.target.value)}
+                          className="flex-1 px-2 py-1 border rounded text-xs outline-none bg-white"
+                        />
+                        <input
+                          type="color"
+                          value={editingDeptColor}
+                          onChange={(e) => setEditingDeptColor(e.target.value)}
+                          className="w-7 h-7 p-0.5 border rounded cursor-pointer"
+                        />
+                        <button
+                          onClick={() => handleUpdateDepartment(d.id)}
+                          className="px-2 py-1 bg-emerald-600 text-white rounded text-xs font-bold"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingDeptId(null)}
+                          className="px-2 py-1 bg-slate-200 text-slate-700 rounded text-xs"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <div className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: d.color }}></div>
+                          <span className="text-xs font-bold text-slate-700">{d.name}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full font-semibold">
+                            {taskCount} tasks
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingDeptId(d.id);
+                              setEditingDeptName(d.name);
+                              setEditingDeptColor(d.color || '#2563eb');
+                            }}
+                            className="p-1 text-slate-400 hover:text-blue-600 rounded"
+                            title="Edit Category"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDepartment(d.id, d.name)}
+                            className={`p-1 rounded ${taskCount > 0 ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-red-600'}`}
+                            title={taskCount > 0 ? 'Cannot delete category with tasks' : 'Delete Category'}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
+            
             <button onClick={() => setShowDeptModal(false)} className="w-full py-2 bg-slate-100 rounded-lg text-sm font-medium">Close</button>
           </div>
         </div>
