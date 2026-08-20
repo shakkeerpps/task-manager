@@ -3,7 +3,14 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { format, addDays, startOfWeek, isToday, parseISO, getDay, getDate, differenceInMinutes, startOfDay } from 'date-fns';
-import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell, CheckCircle2, Video, Eye, EyeOff, Users, Mail, Edit2 } from 'lucide-react';
+import { 
+  Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, 
+  Repeat, Bell, CheckCircle2, Video, Eye, EyeOff, Users, Mail, Edit3, 
+  Sparkles, Layers, ShieldCheck, Tag,
+  Bold, Italic, Underline, Strikethrough, List, ListOrdered, Heading1, Heading2, 
+  AlignLeft, AlignCenter, AlignRight, AlignJustify, Quote, Code, RemoveFormatting,
+  Palette, Highlighter, Table as TableIcon, Undo, Redo, Type
+} from 'lucide-react';
 
 interface Department {
   id: string;
@@ -49,10 +56,10 @@ interface ActiveReminder {
 }
 
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
-  Crit: 'bg-red-100 text-red-700 border-red-300',
-  High: 'bg-orange-100 text-orange-700 border-orange-300',
-  Medi: 'bg-yellow-100 text-yellow-700 border-yellow-300',
-  Low: 'bg-slate-100 text-slate-700 border-slate-300',
+  Crit: 'bg-rose-50 text-rose-700 border-rose-200 font-bold',
+  High: 'bg-amber-50 text-amber-700 border-amber-200 font-bold',
+  Medi: 'bg-blue-50 text-blue-700 border-blue-200 font-medium',
+  Low: 'bg-slate-100 text-slate-600 border-slate-200 font-medium',
 };
 
 const STATUS_STYLES: Record<TaskStatus, string> = {
@@ -62,7 +69,7 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
   Completed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   Resolved: 'bg-purple-50 text-purple-700 border-purple-200',
   Blocked: 'bg-rose-50 text-rose-700 border-rose-200',
-  Cancelled: 'bg-slate-100 text-slate-500 border-slate-300 line-through',
+  Cancelled: 'bg-slate-100 text-slate-500 border-slate-200 line-through',
 };
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -82,6 +89,125 @@ const formatTimeDifference = (diffMinutes: number) => {
     return `Overdue by ${hrs}h ${mins}m`;
   }
 };
+
+// 🎨 ADVANCED WORD-STYLE RICH TEXT & TABLE EDITOR
+function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== value) {
+      editorRef.current.innerHTML = value || '';
+    }
+  }, [value]);
+
+  const exec = (command: string, val: string | undefined = undefined) => {
+    document.execCommand(command, false, val);
+    if (editorRef.current) {
+      onChange(editorRef.current.innerHTML);
+    }
+  };
+
+  const insertTable = () => {
+    const rows = prompt('Enter number of rows:', '3');
+    const cols = prompt('Enter number of columns:', '3');
+    if (!rows || !cols) return;
+
+    const r = parseInt(rows, 10);
+    const c = parseInt(cols, 10);
+    if (isNaN(r) || isNaN(c) || r <= 0 || c <= 0) return;
+
+    let tableHtml = `<table style="width:100%; border-collapse:collapse; margin:10px 0; border:1px solid #cbd5e1;"><tbody>`;
+    for (let i = 0; i < r; i++) {
+      tableHtml += `<tr>`;
+      for (let j = 0; j < c; j++) {
+        if (i === 0) {
+          tableHtml += `<th style="border:1px solid #cbd5e1; padding:8px; background-color:#f1f5f9; text-align:left; font-weight:bold;">Header ${j + 1}</th>`;
+        } else {
+          tableHtml += `<td style="border:1px solid #cbd5e1; padding:8px;">Data</td>`;
+        }
+      }
+      tableHtml += `</tr>`;
+    }
+    tableHtml += `</tbody></table><p><br></p>`;
+
+    exec('insertHTML', tableHtml);
+  };
+
+  return (
+    <div className="border border-slate-300 rounded-xl overflow-hidden bg-white shadow-xs focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition">
+      
+      {/* Comprehensive Word-Like Toolbar */}
+      <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-100/80 border-b border-slate-200 select-none">
+        
+        {/* History */}
+        <button type="button" onClick={() => exec('undo')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Undo"><Undo className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('redo')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Redo"><Redo className="w-3.5 h-3.5" /></button>
+        
+        <div className="w-[1px] h-4 bg-slate-300 mx-1" />
+
+        {/* Headings */}
+        <button type="button" onClick={() => exec('formatBlock', '<h1>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Large Heading"><Heading1 className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('formatBlock', '<h2>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Medium Heading"><Heading2 className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('formatBlock', '<p>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Normal Paragraph"><Type className="w-3.5 h-3.5" /></button>
+
+        <div className="w-[1px] h-4 bg-slate-300 mx-1" />
+
+        {/* Basic Styles */}
+        <button type="button" onClick={() => exec('bold')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 font-bold transition" title="Bold"><Bold className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('italic')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 italic transition" title="Italic"><Italic className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('underline')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 underline transition" title="Underline"><Underline className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('strikeThrough')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 line-through transition" title="Strikethrough"><Strikethrough className="w-3.5 h-3.5" /></button>
+
+        <div className="w-[1px] h-4 bg-slate-300 mx-1" />
+
+        {/* Text Color Picker */}
+        <label className="flex items-center gap-0.5 p-1 hover:bg-slate-200 rounded cursor-pointer text-slate-700" title="Text Color">
+          <Palette className="w-3.5 h-3.5 text-blue-600" />
+          <input type="color" className="w-4 h-4 p-0 border-0 bg-transparent cursor-pointer" onChange={(e) => exec('foreColor', e.target.value)} />
+        </label>
+
+        {/* Highlight Background Color Picker */}
+        <label className="flex items-center gap-0.5 p-1 hover:bg-slate-200 rounded cursor-pointer text-slate-700" title="Highlight Color">
+          <Highlighter className="w-3.5 h-3.5 text-amber-500" />
+          <input type="color" className="w-4 h-4 p-0 border-0 bg-transparent cursor-pointer" defaultValue="#fef08a" onChange={(e) => exec('hiliteColor', e.target.value)} />
+        </label>
+
+        <div className="w-[1px] h-4 bg-slate-300 mx-1" />
+
+        {/* Alignment */}
+        <button type="button" onClick={() => exec('justifyLeft')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Align Left"><AlignLeft className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('justifyCenter')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Align Center"><AlignCenter className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('justifyRight')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Align Right"><AlignRight className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('justifyFull')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Justify"><AlignJustify className="w-3.5 h-3.5" /></button>
+
+        <div className="w-[1px] h-4 bg-slate-300 mx-1" />
+
+        {/* Lists & Table */}
+        <button type="button" onClick={() => exec('insertUnorderedList')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Bullet List"><List className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('insertOrderedList')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Numbered List"><ListOrdered className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={insertTable} className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-slate-200 border border-slate-300 rounded text-xs font-bold text-slate-700 shadow-2xs transition" title="Insert Table">
+          <TableIcon className="w-3.5 h-3.5 text-blue-600" /> Insert Table
+        </button>
+
+        <div className="w-[1px] h-4 bg-slate-300 mx-1" />
+
+        {/* Code, Quote, Clear */}
+        <button type="button" onClick={() => exec('formatBlock', '<blockquote>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Quote"><Quote className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('formatBlock', '<pre>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Code Block"><Code className="w-3.5 h-3.5" /></button>
+        <button type="button" onClick={() => exec('removeFormat')} className="p-1.5 hover:bg-slate-200 rounded text-rose-600 transition" title="Clear Formatting"><RemoveFormatting className="w-3.5 h-3.5" /></button>
+      </div>
+
+      {/* Editable Interactive Viewport */}
+      <div
+        ref={editorRef}
+        contentEditable
+        onInput={(e) => onChange(e.currentTarget.innerHTML)}
+        className="p-4 min-h-[140px] max-h-[260px] overflow-y-auto text-xs text-slate-900 outline-none prose prose-sm max-w-none focus:bg-white [&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_th]:p-2 [&_th]:bg-slate-100 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+        placeholder="Type details, format headings, colors, bullet points or insert dynamic tables..."
+      />
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -426,10 +552,9 @@ export default function Dashboard() {
   };
 
   const handleDeleteDepartment = async (id: string, name: string) => {
-    // Check if category has tasks
     const hasTasks = tasks.some((t) => t.department_id === id);
     if (hasTasks) {
-      return alert(`Cannot delete "${name}". There are tasks associated with this category. Please reassign or delete the tasks first.`);
+      return alert(`Cannot delete "${name}". There are tasks assigned to this category. Delete or move them first.`);
     }
 
     if (!confirm(`Are you sure you want to delete category "${name}"?`)) return;
@@ -486,31 +611,31 @@ export default function Dashboard() {
           <div
             key={reminder.task.id}
             onClick={() => setActiveTask(reminder.task)}
-            className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-2xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 active:scale-98 animate-in slide-in-from-right-10 group ${
-              reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500' : 'bg-amber-50/95 border-amber-300 text-amber-950'
+            className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 active:scale-98 animate-in slide-in-from-right-10 group ${
+              reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500/30' : 'bg-white/95 border-amber-300 text-slate-900 shadow-amber-500/10'
             }`}
           >
-            <div className={`p-2.5 rounded-full shrink-0 shadow-sm transition-transform group-hover:scale-110 ${reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-amber-500 text-white animate-pulse'}`}>
+            <div className={`p-2.5 rounded-xl shrink-0 shadow-sm transition-transform group-hover:scale-110 ${reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-amber-500 text-white animate-pulse'}`}>
               <Bell className="w-4 h-4" />
             </div>
 
             <div className="flex-1 overflow-hidden">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">{reminder.task.title}</h4>
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${reminder.isOverdue ? 'bg-rose-200 text-rose-800 font-extrabold' : 'bg-amber-200 text-amber-800'}`}>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
                   {reminder.task.due_time || 'Today'}
                 </span>
               </div>
-              <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700 font-extrabold' : 'text-amber-800'}`}>{reminder.isOverdue ? '🚨 OVERDUE: ' : '⏳ '}{reminder.timeLabel}</p>
-              <div className="flex items-center justify-between mt-2 pt-1 border-t border-black/5">
-                <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">👆 Click to edit</span>
-                <button onClick={(e) => handleQuickComplete(reminder.task.id, reminder.task.title, e)} className="flex items-center gap-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-md shadow-xs transition">
+              <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>{reminder.isOverdue ? '🚨 OVERDUE: ' : '⏳ '}{reminder.timeLabel}</p>
+              <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100">
+                <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">Click to edit</span>
+                <button onClick={(e) => handleQuickComplete(reminder.task.id, reminder.task.title, e)} className="flex items-center gap-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg shadow-xs transition">
                   <CheckCircle2 className="w-3 h-3" /> Mark Done
                 </button>
               </div>
             </div>
 
-            <button onClick={(e) => { e.stopPropagation(); setDismissedReminders((prev) => new Set([...prev, reminder.task.id])); }} className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-black/10 shrink-0 transition" title="Dismiss">
+            <button onClick={(e) => { e.stopPropagation(); setDismissedReminders((prev) => new Set([...prev, reminder.task.id])); }} className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 shrink-0 transition" title="Dismiss">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -518,16 +643,19 @@ export default function Dashboard() {
       </div>
 
       {/* 1. TOP HEADER & FILTERS */}
-      <header className="bg-white border-b border-slate-200 px-6 py-3 sticky top-0 z-40 shadow-xs">
+      <header className="bg-white border-b border-slate-200 px-6 py-3.5 sticky top-0 z-40 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="bg-blue-600 text-white p-2 rounded-lg shadow-xs">
-              <Calendar className="w-5 h-5" />
+            <div className="bg-blue-600 text-white p-2 rounded-xl shadow-xs">
+              <Layers className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 leading-tight">Project Timeline Hub</h1>
-              <p className="text-xs text-slate-500">
-                {mounted ? `Live Time: ${format(currentTime, 'hh:mm:ss a')} • ` : ''}{filteredTasks.length} Showing
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-bold text-slate-900 leading-tight">Project Timeline Hub</h1>
+              </div>
+              <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {mounted ? `Live: ${format(currentTime, 'hh:mm:ss a')} • ` : ''}{filteredTasks.length} Showing
               </p>
             </div>
           </div>
@@ -535,28 +663,28 @@ export default function Dashboard() {
           <div className="flex items-center flex-wrap gap-2.5">
             <button
               onClick={() => setShowCompletedCancelled((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
-                showCompletedCancelled ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs' : 'bg-slate-100 text-slate-700 border-slate-300 hover:bg-slate-200'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+                showCompletedCancelled ? 'bg-blue-600 text-white border-blue-600 shadow-xs' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
               }`}
             >
               {showCompletedCancelled ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              {showCompletedCancelled ? 'Hide Done/Cancelled' : 'Show Done/Cancelled'}
+              {showCompletedCancelled ? 'Hide Done' : 'Show Done'}
             </button>
 
-            <button onClick={() => setActiveQuickFilter((prev) => (prev === 'today' ? null : 'today'))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${activeQuickFilter === 'today' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+            <button onClick={() => setActiveQuickFilter((prev) => (prev === 'today' ? null : 'today'))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${activeQuickFilter === 'today' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100/50'}`}>
               <Clock className="w-3.5 h-3.5" /> Today: {todayCount}
             </button>
 
-            <button onClick={() => setActiveQuickFilter((prev) => (prev === 'overdue' ? null : 'overdue'))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${activeQuickFilter === 'overdue' ? 'bg-rose-600 text-white border-rose-700' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+            <button onClick={() => setActiveQuickFilter((prev) => (prev === 'overdue' ? null : 'overdue'))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${activeQuickFilter === 'overdue' ? 'bg-rose-600 text-white border-rose-700' : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100/50'}`}>
               <AlertCircle className="w-3.5 h-3.5" /> Overdue: {overdueCount}
             </button>
 
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs w-36 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white" />
+              <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs w-36 text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
             </div>
 
-            <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500">
+            <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)} className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500">
               <option value="All">All Statuses</option>
               <option value="Open">Open</option>
               <option value="In Progress">In Progress</option>
@@ -567,25 +695,25 @@ export default function Dashboard() {
               <option value="Cancelled">Cancelled</option>
             </select>
 
-            <select value={selectedDept} onChange={(e) => setSelectedDept(e.target.value)} className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500">
+            <select value={selectedDept} onChange={(e) => setSelectedDept(e.target.value)} className="px-3 py-1.5 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500">
               <option value="All">All Categories</option>
               {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
 
-            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
-              <span className="text-[10px] text-slate-400 uppercase font-bold">From</span>
-              <input type="date" value={filterFromDate} onChange={(e) => setFilterFromDate(e.target.value)} className="bg-transparent text-xs outline-none cursor-pointer text-slate-700" />
-              <span className="text-[10px] text-slate-400 uppercase font-bold ml-1">To</span>
-              <input type="date" value={filterToDate} onChange={(e) => setFilterToDate(e.target.value)} className="bg-transparent text-xs outline-none cursor-pointer text-slate-700" />
+            <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1">
+              <span className="text-[9px] text-slate-400 uppercase font-bold">From</span>
+              <input type="date" value={filterFromDate} onChange={(e) => setFilterFromDate(e.target.value)} className="bg-transparent text-xs text-slate-700 outline-none cursor-pointer" />
+              <span className="text-[9px] text-slate-400 uppercase font-bold ml-1">To</span>
+              <input type="date" value={filterToDate} onChange={(e) => setFilterToDate(e.target.value)} className="bg-transparent text-xs text-slate-700 outline-none cursor-pointer" />
             </div>
 
             {(search || selectedDept !== 'All' || selectedStatus !== 'All' || filterFromDate || filterToDate || activeQuickFilter || showCompletedCancelled) && (
-              <button onClick={handleResetFilters} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition" title="Reset Filters"><RotateCcw className="w-4 h-4" /></button>
+              <button onClick={handleResetFilters} className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition" title="Reset Filters"><RotateCcw className="w-4 h-4" /></button>
             )}
 
-            <button onClick={() => setShowDeptModal(true)} className="px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-xs font-medium transition">Categories</button>
-            <button onClick={() => setShowHistoryModal(true)} className="p-2 border border-slate-200 bg-white hover:bg-slate-50 rounded-lg text-slate-600 transition" title="History Log"><History className="w-4 h-4" /></button>
-            <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition"><Plus className="w-4 h-4" /> Add Task / Event</button>
+            <button onClick={() => setShowDeptModal(true)} className="px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold transition">Categories</button>
+            <button onClick={() => setShowHistoryModal(true)} className="p-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-xl transition" title="History Log"><History className="w-4 h-4" /></button>
+            <button onClick={() => setShowAddModal(true)} className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition"><Plus className="w-4 h-4" /> Add Task</button>
           </div>
         </div>
       </header>
@@ -611,18 +739,17 @@ export default function Dashboard() {
               return (
                 <div key={idx} className={`text-center py-2 border-r border-slate-200/60 ${current ? 'bg-blue-100/60 font-bold' : ''}`}>
                   <div className={`text-[10px] uppercase font-semibold ${current ? 'text-blue-600' : 'text-slate-400'}`}>{format(date, 'EEE')}</div>
-                  <div className={`text-sm ${current ? 'text-blue-600' : 'text-slate-700'}`}>{format(date, 'd')}</div>
+                  <div className={`text-sm ${current ? 'text-blue-600 font-bold' : 'text-slate-700'}`}>{format(date, 'd')}</div>
                 </div>
               );
             })}
           </div>
 
           {departments.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 text-sm">No categories found. Click <b>Categories</b> above to initialize.</div>
+            <div className="p-8 text-center text-slate-400 text-sm">No categories found. Click Categories above to initialize.</div>
           ) : (
             departments
               .filter((dept) => selectedDept === 'All' || selectedDept === dept.id)
-              // 2. Hide categories that have no active tasks
               .filter((dept) => filteredTasks.some((t) => t.department_id === dept.id))
               .map((dept) => {
                 const deptTasks = filteredTasks.filter((t) => t.department_id === dept.id);
@@ -664,6 +791,8 @@ export default function Dashboard() {
                       const isVisible = (rawEndDay + 1) >= 0 && rawStartDay < 21;
                       const isNarrow = exactWidth < 80;
 
+                      const plainDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '') : '';
+
                       return (
                         <div key={task.id} onClick={() => setActiveTask(task)} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 cursor-pointer group transition relative ${isTaskOverdue ? 'bg-rose-50/40' : ''}`}>
                           <div className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
@@ -686,7 +815,7 @@ export default function Dashboard() {
                                     <Users className="w-2.5 h-2.5" /> {task.participants.length}
                                   </span>
                                 )}
-                                {task.description && <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{task.description}</span>}
+                                {plainDesc && <span className="text-[10px] text-slate-400 truncate max-w-[120px]">{plainDesc}</span>}
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
@@ -703,7 +832,7 @@ export default function Dashboard() {
                               <>
                                 <div
                                   style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
-                                  className={`absolute h-6 rounded-md px-1.5 flex items-center shadow-xs transition z-10 ${
+                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 ${
                                     isTaskOverdue 
                                       ? 'bg-rose-600 text-white ring-2 ring-rose-400 animate-pulse' 
                                       : task.status === 'Completed' || task.status === 'Resolved' 
@@ -760,7 +889,7 @@ export default function Dashboard() {
                                 <React.Fragment key={dayIdx}>
                                   <div
                                     style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
-                                    className="absolute h-6 rounded-md px-1.5 flex items-center bg-blue-600 text-white shadow-xs z-10 transition hover:ring-2 hover:ring-blue-300"
+                                    className="absolute h-6.5 rounded-lg px-2 flex items-center bg-blue-600 text-white shadow-xs z-10 transition hover:ring-2 hover:ring-blue-300"
                                     title={`Recurring: ${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
                                   >
                                     {!recIsNarrow && (
@@ -799,207 +928,236 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 3. TASK DETAILS & EDIT MODAL */}
+      {/* 3. WIDE DOUBLE COLUMN EDIT TASK MODAL */}
       {activeTask && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 border border-slate-100 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                <span className={`text-xs font-bold px-2 py-0.5 rounded border ${STATUS_STYLES[activeTask.status]}`}>{activeTask.status}</span>
-                <h2 className="text-base font-bold text-slate-800">Edit {activeTask.type === 'event' ? 'Event' : 'Task'}</h2>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl p-7 border border-slate-100 max-h-[92vh] overflow-y-auto">
+            
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-5">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl border ${activeTask.type === 'event' ? 'bg-violet-50 border-violet-200 text-violet-600' : 'bg-blue-50 border-blue-200 text-blue-600'}`}>
+                  {activeTask.type === 'event' ? <Video className="w-5 h-5" /> : <Edit3 className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">Edit {activeTask.type === 'event' ? 'Event' : 'Task'}</h2>
+                  <p className="text-xs text-slate-500">Update timeline dates, descriptions & participant reminders</p>
+                </div>
               </div>
-              <button onClick={() => setActiveTask(null)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+              <button onClick={() => setActiveTask(null)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"><X className="w-5 h-5" /></button>
             </div>
 
-            <form onSubmit={handleUpdateTask} className="space-y-3">
-              <div className="flex bg-slate-100 p-1 rounded-lg">
+            <form onSubmit={handleUpdateTask} className="space-y-4">
+              
+              <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl border border-slate-200/70 max-w-sm">
                 <button
                   type="button"
                   onClick={() => setActiveTask({ ...activeTask, type: 'task' })}
-                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${activeTask.type === 'task' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-500'}`}
+                  className={`py-1.5 text-xs font-bold rounded-lg transition ${activeTask.type === 'task' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                  Task
+                  Standard Task
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTask({ ...activeTask, type: 'event' })}
-                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${activeTask.type === 'event' ? 'bg-white shadow-xs text-violet-600' : 'text-slate-500'}`}
+                  className={`py-1.5 text-xs font-bold rounded-lg transition ${activeTask.type === 'event' ? 'bg-white shadow-xs text-violet-600' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                  Event
+                  Meeting / Event
                 </button>
               </div>
 
-              <input
-                required type="text" placeholder="Title" value={activeTask.title}
-                onChange={(e) => setActiveTask({ ...activeTask, title: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg text-sm outline-none"
-              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 mb-1.5 block">Title *</label>
+                    <input
+                      required type="text" placeholder="Task title..." value={activeTask.title}
+                      onChange={(e) => setActiveTask({ ...activeTask, title: e.target.value })}
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition"
+                    />
+                  </div>
 
-              {activeTask.type === 'event' && (
-                <div className="relative">
-                  <Video className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="url"
-                    placeholder="Google Meet Link (https://meet.google.com/...)"
-                    value={activeTask.meet_link || ''}
-                    onChange={(e) => setActiveTask({ ...activeTask, meet_link: e.target.value })}
-                    className="w-full pl-9 pr-3 py-2 border rounded-lg text-xs outline-none bg-violet-50/50"
-                  />
-                </div>
-              )}
+                  {activeTask.type === 'event' && (
+                    <div className="bg-violet-50/60 border border-violet-200 p-3 rounded-xl space-y-1">
+                      <label className="text-xs font-bold text-violet-900 flex items-center gap-1.5">
+                        <Video className="w-3.5 h-3.5 text-violet-600" /> Google Meet Link
+                      </label>
+                      <input
+                        type="url"
+                        placeholder="https://meet.google.com/..."
+                        value={activeTask.meet_link || ''}
+                        onChange={(e) => setActiveTask({ ...activeTask, meet_link: e.target.value })}
+                        className="w-full px-3 py-1.5 bg-white border border-violet-300 rounded-lg text-xs text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                    </div>
+                  )}
 
-              {/* Participants Section */}
-              <div className="border rounded-lg p-2.5 bg-slate-50 space-y-2">
-                <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
-                  <Mail className="w-3.5 h-3.5 text-blue-600" /> Email Participants (Mandatory: vertexsolutionsptb@gmail.com)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    list="saved-emails"
-                    placeholder="Add participant email..."
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="flex-1 px-2.5 py-1 text-xs border rounded-lg bg-white outline-none"
-                  />
-                  <datalist id="saved-emails">
-                    {savedEmails.map((em) => <option key={em} value={em} />)}
-                  </datalist>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (emailInput.trim() && !activeTask.participants.includes(emailInput.trim())) {
-                        setActiveTask({ ...activeTask, participants: [...activeTask.participants, emailInput.trim()] });
-                        setEmailInput('');
-                      }
-                    }}
-                    className="px-3 py-1 bg-slate-800 text-white rounded-lg text-xs font-semibold"
-                  >
-                    Add
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Category *</label>
+                      <select required value={activeTask.department_id} onChange={(e) => setActiveTask({ ...activeTask, department_id: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select Category</option>
+                        {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Priority</label>
+                      <select value={activeTask.priority} onChange={(e) => setActiveTask({ ...activeTask, priority: e.target.value as TaskPriority })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="Medi">Medium</option>
+                        <option value="Crit">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Low">Low</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Status</label>
+                      <select value={activeTask.status} onChange={(e) => setActiveTask({ ...activeTask, status: e.target.value as TaskStatus })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="Open">Open</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Blocked">Blocked</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Frequency</label>
+                      <select value={activeTask.frequency} onChange={(e) => setActiveTask({ ...activeTask, frequency: e.target.value as TaskFrequency })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="once">One-time Task</option>
+                        <option value="daily">Daily Repeat</option>
+                        <option value="weekly">Weekly Repeat</option>
+                        <option value="monthly">Monthly Repeat</option>
+                        <option value="yearly">Yearly Repeat</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {activeTask.frequency === 'weekly' && (
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <label className="text-[11px] font-bold text-slate-700">Repeat Day of the Week</label>
+                      <select value={activeTask.recurring_day || 'Monday'} onChange={(e) => setActiveTask({ ...activeTask, recurring_day: e.target.value })} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs mt-1 bg-white outline-none">
+                        {DAYS_OF_WEEK.map((day) => <option key={day} value={day}>{day}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {activeTask.frequency === 'monthly' && (
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <label className="text-[11px] font-bold text-slate-700">Repeat Day of Month (1-31)</label>
+                      <input type="number" min={1} max={31} value={activeTask.recurring_date || 1} onChange={(e) => setActiveTask({ ...activeTask, recurring_date: Number(e.target.value) })} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs mt-1 bg-white outline-none"/>
+                    </div>
+                  )}
                 </div>
-                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                  {activeTask.participants?.map((pEmail) => (
-                    <span key={pEmail} className={`px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1 shadow-2xs border ${pEmail === 'vertexsolutionsptb@gmail.com' ? 'bg-blue-100 text-blue-800 font-bold border-blue-300' : 'bg-white text-slate-700'}`}>
-                      {pEmail}
-                      {pEmail !== 'vertexsolutionsptb@gmail.com' && (
-                        <X
-                          className="w-3 h-3 cursor-pointer text-slate-400 hover:text-red-600"
-                          onClick={() => setActiveTask({ ...activeTask, participants: activeTask.participants.filter((e) => e !== pEmail) })}
+
+                <div className="space-y-4">
+                  <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-3">
+                    <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-blue-600" /> Date & Time Configuration
+                    </h3>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-slate-600 font-bold block mb-1">Start Date</label>
+                        <input
+                          type="date"
+                          value={activeTask.start_date || ''}
+                          onChange={(e) => setActiveTask({ ...activeTask, start_date: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none"
                         />
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
+                        <input
+                          type="time"
+                          value={activeTask.start_time || ''}
+                          onChange={(e) => setActiveTask({ ...activeTask, start_time: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none mt-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-600 font-bold block mb-1">Due Date *</label>
+                        <input
+                          type="date"
+                          required
+                          value={activeTask.due_date || ''}
+                          onChange={(e) => setActiveTask({ ...activeTask, due_date: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none"
+                        />
+                        <input
+                          type="time"
+                          value={activeTask.due_time || ''}
+                          onChange={(e) => setActiveTask({ ...activeTask, due_time: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none mt-1.5"
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-              <textarea
-                rows={2} placeholder="Description / Notes (Optional)" value={activeTask.description || ''}
-                onChange={(e) => setActiveTask({ ...activeTask, description: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg text-sm outline-none resize-none"
-              />
-
-              <div className="grid grid-cols-2 gap-2">
-                <select required value={activeTask.department_id} onChange={(e) => setActiveTask({ ...activeTask, department_id: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="">Select Category</option>
-                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-
-                <select value={activeTask.priority} onChange={(e) => setActiveTask({ ...activeTask, priority: e.target.value as TaskPriority })} className="px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="Medi">Medium Priority</option>
-                  <option value="Crit">Critical Priority</option>
-                  <option value="High">High Priority</option>
-                  <option value="Low">Low Priority</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <select value={activeTask.status} onChange={(e) => setActiveTask({ ...activeTask, status: e.target.value as TaskStatus })} className="px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="Open">Open</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Pending">Pending</option>
-                  <option value="Completed">Completed</option>
-                  <option value="Resolved">Resolved</option>
-                  <option value="Blocked">Blocked</option>
-                  <option value="Cancelled">Cancelled</option>
-                </select>
-
-                <select value={activeTask.frequency} onChange={(e) => setActiveTask({ ...activeTask, frequency: e.target.value as TaskFrequency })} className="px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="once">Once</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                </select>
-              </div>
-
-              {activeTask.frequency === 'weekly' && (
-                <div className="bg-slate-50 p-2 rounded-lg border">
-                  <label className="text-[11px] font-semibold text-slate-600">Select Day of the Week</label>
-                  <select value={activeTask.recurring_day || 'Monday'} onChange={(e) => setActiveTask({ ...activeTask, recurring_day: e.target.value })} className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none">
-                    {DAYS_OF_WEEK.map((day) => <option key={day} value={day}>{day}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {activeTask.frequency === 'monthly' && (
-                <div className="bg-slate-50 p-2 rounded-lg border">
-                  <label className="text-[11px] font-semibold text-slate-600">Select Day of the Month (1 to 31)</label>
-                  <input type="number" min={1} max={31} value={activeTask.recurring_date || 1} onChange={(e) => setActiveTask({ ...activeTask, recurring_date: Number(e.target.value) })} className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none"/>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg border">
-                <div>
-                  <label className="text-[11px] text-slate-500 font-semibold">Start Date & Time (Optional)</label>
-                  <input
-                    type="date"
-                    value={activeTask.start_date || ''}
-                    onChange={(e) => setActiveTask({ ...activeTask, start_date: e.target.value })}
-                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
-                  />
-                  <div className="relative mt-1">
-                    <input
-                      type="time"
-                      value={activeTask.start_time || ''}
-                      onChange={(e) => setActiveTask({ ...activeTask, start_time: e.target.value })}
-                      className="w-full px-2.5 py-1 pr-6 border rounded-lg text-xs bg-white outline-none"
-                      placeholder="Time (Optional)"
-                    />
-                    {activeTask.start_time && (
-                      <button type="button" onClick={() => setActiveTask({ ...activeTask, start_time: '' })} className="absolute right-1 top-1 text-slate-400 hover:text-slate-600 bg-white p-0.5"><X className="w-3.5 h-3.5" /></button>
-                    )}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-blue-600" /> Alert Participants</span>
+                      <span className="text-[10px] text-emerald-600 flex items-center gap-1 font-semibold"><ShieldCheck className="w-3 h-3" /> Mandatory Synced</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        list="saved-emails"
+                        placeholder="Add participant email..."
+                        value={emailInput}
+                        onChange={(e) => setEmailInput(e.target.value)}
+                        className="flex-1 px-3 py-1.5 bg-white border border-slate-200 text-xs text-slate-900 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <datalist id="saved-emails">
+                        {savedEmails.map((em) => <option key={em} value={em} />)}
+                      </datalist>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (emailInput.trim() && !activeTask.participants.includes(emailInput.trim())) {
+                            setActiveTask({ ...activeTask, participants: [...activeTask.participants, emailInput.trim()] });
+                            setEmailInput('');
+                          }
+                        }}
+                        className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-1">
+                      {activeTask.participants?.map((pEmail) => (
+                        <span key={pEmail} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 border shadow-2xs ${pEmail === 'vertexsolutionsptb@gmail.com' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-white text-slate-700 border-slate-200'}`}>
+                          {pEmail}
+                          {pEmail !== 'vertexsolutionsptb@gmail.com' && (
+                            <X
+                              className="w-3 h-3 cursor-pointer text-slate-400 hover:text-rose-600"
+                              onClick={() => setActiveTask({ ...activeTask, participants: activeTask.participants.filter((e) => e !== pEmail) })}
+                            />
+                          )}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="text-[11px] text-slate-500 font-semibold">Due Date & Time</label>
-                  <input
-                    type="date"
-                    required
-                    value={activeTask.due_date || ''}
-                    onChange={(e) => setActiveTask({ ...activeTask, due_date: e.target.value })}
-                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
-                  />
-                  <div className="relative mt-1">
-                    <input
-                      type="time"
-                      value={activeTask.due_time || ''}
-                      onChange={(e) => setActiveTask({ ...activeTask, due_time: e.target.value })}
-                      className="w-full px-2.5 py-1 pr-6 border rounded-lg text-xs bg-white outline-none"
-                      placeholder="Time (Optional)"
-                    />
-                    {activeTask.due_time && (
-                      <button type="button" onClick={() => setActiveTask({ ...activeTask, due_time: '' })} className="absolute right-1 top-1 text-slate-400 hover:text-slate-600 bg-white p-0.5"><X className="w-3.5 h-3.5" /></button>
-                    )}
-                  </div>
-                </div>
+
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t">
-                <button type="button" onClick={() => handleDeleteTask(activeTask.id, activeTask.title)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-lg font-medium transition"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+              {/* 🎨 Word-Style Color, Alignment, List & Table Editor */}
+              <div className="pt-2">
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">Rich Description, Lists & Custom Tables</label>
+                <AdvancedRichEditor
+                  value={activeTask.description || ''}
+                  onChange={(newHtml) => setActiveTask({ ...activeTask, description: newHtml })}
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-2">
+                <button type="button" onClick={() => handleDeleteTask(activeTask.id, activeTask.title)} className="flex items-center gap-1.5 px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-xl font-bold transition"><Trash2 className="w-4 h-4" /> Delete Task</button>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setActiveTask(null)} className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-lg">Cancel</button>
-                  <button type="submit" className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-xs">Save Changes</button>
+                  <button type="button" onClick={() => setActiveTask(null)} className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl font-semibold">Cancel</button>
+                  <button type="submit" className="px-6 py-2 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs transition">Save Changes</button>
                 </div>
               </div>
             </form>
@@ -1007,237 +1165,284 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* 4. CREATE TASK / EVENT MODAL */}
+      {/* 4. WIDE DOUBLE COLUMN ADD TASK MODAL */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-base font-bold text-slate-800 mb-3">Add New Task / Event</h2>
-            <form onSubmit={handleAddTask} className="space-y-3">
-              <div className="flex bg-slate-100 p-1 rounded-lg">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl p-7 border border-slate-100 max-h-[92vh] overflow-y-auto">
+            
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-5">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl border ${formData.type === 'event' ? 'bg-violet-50 border-violet-200 text-violet-600' : 'bg-blue-50 border-blue-200 text-blue-600'}`}>
+                  {formData.type === 'event' ? <Video className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900">Create New {formData.type === 'event' ? 'Event' : 'Task'}</h2>
+                  <p className="text-xs text-slate-500">Configure task timeline, repeating rules, tables & participants</p>
+                </div>
+              </div>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl hover:bg-slate-100"><X className="w-5 h-5" /></button>
+            </div>
+
+            <form onSubmit={handleAddTask} className="space-y-4">
+              
+              <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-xl border border-slate-200/70 max-w-sm">
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, type: 'task' })}
-                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${formData.type === 'task' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-500'}`}
+                  className={`py-1.5 text-xs font-bold rounded-lg transition ${formData.type === 'task' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                  Task
+                  Standard Task
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, type: 'event' })}
-                  className={`flex-1 py-1 text-xs font-bold rounded-md transition ${formData.type === 'event' ? 'bg-white shadow-xs text-violet-600' : 'text-slate-500'}`}
+                  className={`py-1.5 text-xs font-bold rounded-lg transition ${formData.type === 'event' ? 'bg-white shadow-xs text-violet-600' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                  Event
+                  Meeting / Event
                 </button>
               </div>
 
-              <input required type="text" placeholder="Title" value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm outline-none" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 mb-1.5 block">Title *</label>
+                    <input required type="text" placeholder="Title..." value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition" />
+                  </div>
 
-              {formData.type === 'event' && (
-                <div className="relative">
-                  <Video className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="url"
-                    placeholder="Google Meet Link (https://meet.google.com/...)"
-                    value={formData.meet_link}
-                    onChange={(e) => setFormData({ ...formData, meet_link: e.target.value })}
-                    className="w-full pl-9 pr-3 py-2 border rounded-lg text-xs outline-none bg-violet-50/50"
-                  />
-                </div>
-              )}
+                  {formData.type === 'event' && (
+                    <div className="bg-violet-50/60 border border-violet-200 p-3 rounded-xl space-y-1">
+                      <label className="text-xs font-bold text-violet-900 flex items-center gap-1.5">
+                        <Video className="w-3.5 h-3.5 text-violet-600" /> Google Meet Link
+                      </label>
+                      <input
+                        type="url"
+                        placeholder="https://meet.google.com/..."
+                        value={formData.meet_link}
+                        onChange={(e) => setFormData({ ...formData, meet_link: e.target.value })}
+                        className="w-full px-3 py-1.5 bg-white border border-violet-300 rounded-lg text-xs text-slate-900 placeholder-slate-400 outline-none focus:ring-2 focus:ring-violet-500"
+                      />
+                    </div>
+                  )}
 
-              {/* Participants Section */}
-              <div className="border rounded-lg p-2.5 bg-slate-50 space-y-2">
-                <label className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
-                  <Mail className="w-3.5 h-3.5 text-blue-600" /> Email Participants (Mandatory: vertexsolutionsptb@gmail.com)
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="email"
-                    list="saved-emails"
-                    placeholder="Add participant email..."
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
-                    className="flex-1 px-2.5 py-1 text-xs border rounded-lg bg-white outline-none"
-                  />
-                  <datalist id="saved-emails">
-                    {savedEmails.map((em) => <option key={em} value={em} />)}
-                  </datalist>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (emailInput.trim() && !formData.participants.includes(emailInput.trim())) {
-                        setFormData({ ...formData, participants: [...formData.participants, emailInput.trim()] });
-                        setEmailInput('');
-                      }
-                    }}
-                    className="px-3 py-1 bg-slate-800 text-white rounded-lg text-xs font-semibold"
-                  >
-                    Add
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Category *</label>
+                      <select required value={formData.department_id} onChange={(e) => setFormData({ ...formData, department_id: e.target.value })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Select Category</option>
+                        {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Priority</label>
+                      <select value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: e.target.value as TaskPriority })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="Medi">Medium</option>
+                        <option value="Crit">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Low">Low</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Status</label>
+                      <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value as TaskStatus })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="Open">Open</option>
+                        <option value="In Progress">In Progress</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Completed">Completed</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Blocked">Blocked</option>
+                        <option value="Cancelled">Cancelled</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 mb-1.5 block">Frequency</label>
+                      <select value={formData.frequency} onChange={(e) => setFormData({ ...formData, frequency: e.target.value as TaskFrequency })} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="once">One-time Task</option>
+                        <option value="daily">Daily Repeat</option>
+                        <option value="weekly">Weekly Repeat</option>
+                        <option value="monthly">Monthly Repeat</option>
+                        <option value="yearly">Yearly Repeat</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {formData.frequency === 'weekly' && (
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <label className="text-[11px] font-bold text-slate-700">Repeat Day of the Week</label>
+                      <select value={formData.recurring_day} onChange={(e) => setFormData({ ...formData, recurring_day: e.target.value })} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs mt-1 bg-white outline-none">
+                        {DAYS_OF_WEEK.map((day) => <option key={day} value={day}>{day}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {formData.frequency === 'monthly' && (
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                      <label className="text-[11px] font-bold text-slate-700">Repeat Day of Month (1-31)</label>
+                      <input type="number" min={1} max={31} value={formData.recurring_date} onChange={(e) => setFormData({ ...formData, recurring_date: Number(e.target.value) })} className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs mt-1 bg-white outline-none" />
+                    </div>
+                  )}
                 </div>
-                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                  {formData.participants.map((pEmail) => (
-                    <span key={pEmail} className={`px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1 shadow-2xs border ${pEmail === 'vertexsolutionsptb@gmail.com' ? 'bg-blue-100 text-blue-800 font-bold border-blue-300' : 'bg-white text-slate-700'}`}>
-                      {pEmail}
-                      {pEmail !== 'vertexsolutionsptb@gmail.com' && (
-                        <X
-                          className="w-3 h-3 cursor-pointer text-slate-400 hover:text-red-600"
-                          onClick={() => setFormData({ ...formData, participants: formData.participants.filter((e) => e !== pEmail) })}
+
+                <div className="space-y-4">
+                  <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-3">
+                    <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-blue-600" /> Date & Time Configuration
+                    </h3>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-slate-600 font-bold block mb-1">Start Date</label>
+                        <input
+                          type="date"
+                          value={formData.start_date || ''}
+                          onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none"
                         />
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
+                        <input
+                          type="time"
+                          value={formData.start_time || ''}
+                          onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none mt-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-600 font-bold block mb-1">Due Date *</label>
+                        <input
+                          type="date"
+                          required
+                          value={formData.due_date || ''}
+                          onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none"
+                        />
+                        <input
+                          type="time"
+                          value={formData.due_time || ''}
+                          onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none mt-1.5"
+                        />
+                      </div>
+                    </div>
+                  </div>
 
-              <textarea rows={2} placeholder="Description / Notes (Optional)" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm outline-none resize-none" />
-
-              <div className="grid grid-cols-2 gap-2">
-                <select required value={formData.department_id} onChange={(e) => setFormData({ ...formData, department_id: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="">Select Category</option>
-                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-
-                <select value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: e.target.value as TaskPriority })} className="px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="Medi">Medium Priority</option>
-                  <option value="Crit">Critical Priority</option>
-                  <option value="High">High Priority</option>
-                  <option value="Low">Low Priority</option>
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <select value={formData.status} onChange={(e) => setFormData({ ...formData, status: e.target.value as TaskStatus })} className="px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="Open">Open</option>
-                  <option value="In Progress">In Progress</option>
-                  <option value="Pending">Pending</option>
-                  <option value="Completed">Completed</option>
-                  <option value="Resolved">Resolved</option>
-                  <option value="Blocked">Blocked</option>
-                  <option value="Cancelled">Cancelled</option>
-                </select>
-
-                <select value={formData.frequency} onChange={(e) => setFormData({ ...formData, frequency: e.target.value as TaskFrequency })} className="px-3 py-2 border rounded-lg text-xs outline-none">
-                  <option value="once">Once</option>
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="yearly">Yearly</option>
-                </select>
-              </div>
-
-              {formData.frequency === 'weekly' && (
-                <div className="bg-slate-50 p-2 rounded-lg border">
-                  <label className="text-[11px] font-semibold text-slate-600">Select Day of the Week</label>
-                  <select value={formData.recurring_day} onChange={(e) => setFormData({ ...formData, recurring_day: e.target.value })} className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none">
-                    {DAYS_OF_WEEK.map((day) => <option key={day} value={day}>{day}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {formData.frequency === 'monthly' && (
-                <div className="bg-slate-50 p-2 rounded-lg border">
-                  <label className="text-[11px] font-semibold text-slate-600">Select Day of the Month (1 to 31)</label>
-                  <input type="number" min={1} max={31} value={formData.recurring_date} onChange={(e) => setFormData({ ...formData, recurring_date: Number(e.target.value) })} className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none" />
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-lg border">
-                <div>
-                  <label className="text-[11px] text-slate-500 font-semibold">Start Date & Time (Optional)</label>
-                  <input
-                    type="date"
-                    value={formData.start_date || ''}
-                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
-                  />
-                  <div className="relative mt-1">
-                    <input
-                      type="time"
-                      value={formData.start_time || ''}
-                      onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
-                      className="w-full px-2.5 py-1 pr-6 border rounded-lg text-xs bg-white outline-none"
-                      placeholder="Time (Optional)"
-                    />
-                    {formData.start_time && (
-                      <button type="button" onClick={() => setFormData({ ...formData, start_time: '' })} className="absolute right-1 top-1 text-slate-400 hover:text-slate-600 bg-white p-0.5"><X className="w-3.5 h-3.5" /></button>
-                    )}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-blue-600" /> Email Participants</span>
+                      <span className="text-[10px] text-emerald-600 flex items-center gap-1 font-semibold"><ShieldCheck className="w-3 h-3" /> Mandatory Synced</span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        list="saved-emails"
+                        placeholder="Add participant email..."
+                        value={emailInput}
+                        onChange={(e) => setEmailInput(e.target.value)}
+                        className="flex-1 px-3 py-1.5 bg-white border border-slate-200 text-xs text-slate-900 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <datalist id="saved-emails">
+                        {savedEmails.map((em) => <option key={em} value={em} />)}
+                      </datalist>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (emailInput.trim() && !formData.participants.includes(emailInput.trim())) {
+                            setFormData({ ...formData, participants: [...formData.participants, emailInput.trim()] });
+                            setEmailInput('');
+                          }
+                        }}
+                        className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-1">
+                      {formData.participants.map((pEmail) => (
+                        <span key={pEmail} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 border shadow-2xs ${pEmail === 'vertexsolutionsptb@gmail.com' ? 'bg-blue-100 text-blue-800 border-blue-200' : 'bg-white text-slate-700 border-slate-200'}`}>
+                          {pEmail}
+                          {pEmail !== 'vertexsolutionsptb@gmail.com' && (
+                            <X
+                              className="w-3 h-3 cursor-pointer text-slate-400 hover:text-rose-600"
+                              onClick={() => setFormData({ ...formData, participants: formData.participants.filter((e) => e !== pEmail) })}
+                            />
+                          )}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="text-[11px] text-slate-500 font-semibold">Due Date & Time</label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.due_date || ''}
-                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                    className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
-                  />
-                  <div className="relative mt-1">
-                    <input
-                      type="time"
-                      value={formData.due_time || ''}
-                      onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
-                      className="w-full px-2.5 py-1 pr-6 border rounded-lg text-xs bg-white outline-none"
-                      placeholder="Time (Optional)"
-                    />
-                    {formData.due_time && (
-                      <button type="button" onClick={() => setFormData({ ...formData, due_time: '' })} className="absolute right-1 top-1 text-slate-400 hover:text-slate-600 bg-white p-0.5"><X className="w-3.5 h-3.5" /></button>
-                    )}
-                  </div>
-                </div>
+
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-sm text-slate-600">Cancel</button>
-                <button type="submit" className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg font-medium">Save Entry</button>
+              {/* 🎨 Word-Style Color, Alignment, List & Table Editor */}
+              <div className="pt-2">
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">Rich Description, Lists & Custom Tables</label>
+                <AdvancedRichEditor
+                  value={formData.description}
+                  onChange={(newHtml) => setFormData({ ...formData, description: newHtml })}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4 border-t border-slate-100 mt-2">
+                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-xl font-semibold">Cancel</button>
+                <button type="submit" className="px-6 py-2 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs transition">Create Entry</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* 5. DEPARTMENT MASTER MODAL (With Edit & Delete Safety) */}
+      {/* 5. CATEGORIES MASTER MODAL */}
       {showDeptModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-base font-bold text-slate-800 mb-3">Categories Master</h2>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
             
-            <div className="flex gap-2 mb-4">
-              <input type="text" placeholder="New Category Name" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="flex-1 px-3 py-1.5 border rounded-lg text-sm outline-none" />
-              <input type="color" value={newDeptColor} onChange={(e) => setNewDeptColor(e.target.value)} className="w-10 h-9 p-0.5 border rounded-lg cursor-pointer" />
-              <button onClick={handleAddDepartment} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Add</button>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Tag className="w-5 h-5 text-blue-600" />
+                <h2 className="text-base font-bold text-slate-900">Categories Manager</h2>
+              </div>
+              <button onClick={() => setShowDeptModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"><X className="w-5 h-5" /></button>
+            </div>
+            
+            <div className="flex gap-2 mb-4 bg-slate-50 p-2 rounded-xl border border-slate-200">
+              <input type="text" placeholder="Category Name" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="color" value={newDeptColor} onChange={(e) => setNewDeptColor(e.target.value)} className="w-9 h-8 p-0.5 border border-slate-200 bg-white rounded-lg cursor-pointer" />
+              <button onClick={handleAddDepartment} className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition">Add</button>
             </div>
 
-            <div className="space-y-2 max-h-60 overflow-y-auto mb-4 border-t pt-3">
+            <div className="space-y-2 max-h-60 overflow-y-auto mb-4">
               {departments.map((d) => {
                 const taskCount = tasks.filter((t) => t.department_id === d.id).length;
 
                 return (
-                  <div key={d.id} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <div key={d.id} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded-xl border border-slate-200/70">
                     {editingDeptId === d.id ? (
                       <div className="flex items-center gap-2 flex-1 mr-2">
                         <input
                           type="text"
                           value={editingDeptName}
                           onChange={(e) => setEditingDeptName(e.target.value)}
-                          className="flex-1 px-2 py-1 border rounded text-xs outline-none bg-white"
+                          className="flex-1 px-2.5 py-1 bg-white border border-slate-200 text-xs text-slate-900 rounded-lg outline-none"
                         />
                         <input
                           type="color"
                           value={editingDeptColor}
                           onChange={(e) => setEditingDeptColor(e.target.value)}
-                          className="w-7 h-7 p-0.5 border rounded cursor-pointer"
+                          className="w-7 h-7 p-0.5 border border-slate-200 bg-white rounded-md cursor-pointer"
                         />
                         <button
                           onClick={() => handleUpdateDepartment(d.id)}
-                          className="px-2 py-1 bg-emerald-600 text-white rounded text-xs font-bold"
+                          className="px-2.5 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold"
                         >
                           Save
                         </button>
                         <button
                           onClick={() => setEditingDeptId(null)}
-                          className="px-2 py-1 bg-slate-200 text-slate-700 rounded text-xs"
+                          className="px-2 py-1 bg-slate-200 text-slate-700 rounded-lg text-xs"
                         >
                           Cancel
                         </button>
@@ -1245,9 +1450,9 @@ export default function Dashboard() {
                     ) : (
                       <>
                         <div className="flex items-center gap-2">
-                          <div className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: d.color }}></div>
-                          <span className="text-xs font-bold text-slate-700">{d.name}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded-full font-semibold">
+                          <div className="w-3.5 h-3.5 rounded-full shadow-2xs" style={{ backgroundColor: d.color }}></div>
+                          <span className="text-xs font-bold text-slate-800">{d.name}</span>
+                          <span className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-600 rounded-full font-semibold">
                             {taskCount} tasks
                           </span>
                         </div>
@@ -1258,15 +1463,15 @@ export default function Dashboard() {
                               setEditingDeptName(d.name);
                               setEditingDeptColor(d.color || '#2563eb');
                             }}
-                            className="p-1 text-slate-400 hover:text-blue-600 rounded"
+                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-white rounded-lg transition"
                             title="Edit Category"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteDepartment(d.id, d.name)}
-                            className={`p-1 rounded ${taskCount > 0 ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-red-600'}`}
-                            title={taskCount > 0 ? 'Cannot delete category with tasks' : 'Delete Category'}
+                            className={`p-1.5 rounded-lg transition ${taskCount > 0 ? 'text-slate-300 cursor-not-allowed' : 'text-slate-400 hover:text-rose-600 hover:bg-white'}`}
+                            title={taskCount > 0 ? 'Cannot delete category containing active tasks' : 'Delete Category'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1278,31 +1483,31 @@ export default function Dashboard() {
               })}
             </div>
             
-            <button onClick={() => setShowDeptModal(false)} className="w-full py-2 bg-slate-100 rounded-lg text-sm font-medium">Close</button>
+            <button onClick={() => setShowDeptModal(false)} className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition">Close</button>
           </div>
         </div>
       )}
 
       {/* 6. HISTORY LOG MODAL */}
       {showHistoryModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
-              <History className="w-4 h-4 text-blue-600" /> Activity History Log
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
+            <h2 className="text-base font-bold text-slate-900 mb-3 flex items-center gap-2">
+              <History className="w-5 h-5 text-blue-600" /> Activity History Log
             </h2>
-            <div className="space-y-2 max-h-72 overflow-y-auto border-t border-b py-3 mb-3">
+            <div className="space-y-2 max-h-72 overflow-y-auto border-t border-b border-slate-100 py-3 mb-3">
               {history.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-4">No history records yet.</p>
+                <p className="text-xs text-slate-400 text-center py-6">No history records yet.</p>
               ) : (
                 history.map((item) => (
-                  <div key={item.id} className="text-xs bg-slate-50 p-2.5 rounded border border-slate-100">
-                    <p className="font-semibold text-slate-700">{item.action}</p>
-                    <p className="text-slate-400 mt-1">{format(parseISO(item.changed_at), 'MMM dd, yyyy - hh:mm a')}</p>
+                  <div key={item.id} className="text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    <p className="font-semibold text-slate-800">{item.action}</p>
+                    <p className="text-[10px] text-slate-400 mt-1">{format(parseISO(item.changed_at), 'MMM dd, yyyy - hh:mm a')}</p>
                   </div>
                 ))
               )}
             </div>
-            <button onClick={() => setShowHistoryModal(false)} className="w-full py-2 bg-slate-100 rounded-lg text-sm font-medium">Close</button>
+            <button onClick={() => setShowHistoryModal(false)} className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition">Close</button>
           </div>
         </div>
       )}
