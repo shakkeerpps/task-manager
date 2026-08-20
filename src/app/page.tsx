@@ -10,7 +10,7 @@ import {
   Bold, Italic, Underline, Strikethrough, List, ListOrdered, Heading1, Heading2, 
   AlignLeft, AlignCenter, AlignRight, AlignJustify, Quote, Code, RemoveFormatting,
   Palette, Highlighter, Table as TableIcon, Undo, Redo, Type, CheckSquare, Ban,
-  Check, RefreshCw
+  Check, RefreshCw, PlayCircle, ExternalLink
 } from 'lucide-react';
 
 interface Department {
@@ -66,6 +66,12 @@ interface SelectedInstance {
   isCancelled: boolean;
 }
 
+interface UrgentPopupAlert {
+  task: Task;
+  alertType: 'start' | 'due';
+  timeStr: string;
+}
+
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
   Crit: 'bg-rose-50 text-rose-700 border-rose-200 font-bold',
   High: 'bg-amber-50 text-amber-700 border-amber-200 font-bold',
@@ -85,19 +91,19 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const formatTimeDifference = (diffMinutes: number) => {
+const formatTimeDifference = (diffMinutes: number, type: 'start' | 'due') => {
   if (diffMinutes >= 0) {
-    if (diffMinutes === 0) return 'Due right now!';
-    if (diffMinutes < 60) return `${diffMinutes} min remaining`;
+    if (diffMinutes === 0) return type === 'start' ? 'Starting right now!' : 'Due right now!';
+    if (diffMinutes < 60) return type === 'start' ? `Starts in ${diffMinutes}m` : `${diffMinutes}m remaining`;
     const hrs = Math.floor(diffMinutes / 60);
     const mins = diffMinutes % 60;
-    return `${hrs}h ${mins}m remaining`;
+    return type === 'start' ? `Starts in ${hrs}h ${mins}m` : `${hrs}h ${mins}m remaining`;
   } else {
-    const overdueMins = Math.abs(diffMinutes);
-    if (overdueMins < 60) return `Passed by ${overdueMins} min`;
-    const hrs = Math.floor(overdueMins / 60);
-    const mins = overdueMins % 60;
-    return `Passed by ${hrs}h ${mins}m`;
+    const passedMins = Math.abs(diffMinutes);
+    if (passedMins < 60) return type === 'start' ? `Started ${passedMins}m ago` : `Overdue by ${passedMins}m`;
+    const hrs = Math.floor(passedMins / 60);
+    const mins = passedMins % 60;
+    return type === 'start' ? `Started ${hrs}h ${mins}m ago` : `Overdue by ${hrs}h ${mins}m`;
   }
 };
 
@@ -221,8 +227,9 @@ export default function Dashboard() {
   const notifiedEventsRef = useRef<Set<string>>(new Set());
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  // Instance Status Popover State
+  // States for Popups
   const [selectedInstance, setSelectedInstance] = useState<SelectedInstance | null>(null);
+  const [urgentPopupAlert, setUrgentPopupAlert] = useState<UrgentPopupAlert | null>(null);
 
   const enableAudio = useCallback(() => {
     if (!audioContextRef.current) {
@@ -276,7 +283,7 @@ export default function Dashboard() {
     }
   }, []);
 
-  // 1-Second Interval Master Clock & Notifications
+  // 1-Second Master Realtime Listener: Start Time & Due Time Live Popup Triggers
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
@@ -302,7 +309,7 @@ export default function Dashboard() {
 
           if (!isApplicableToday) return;
 
-          // Start notification
+          // 🚀 1. EXACT START TIME ALARM POPUP
           if (task.start_time) {
             const [sh, sm] = task.start_time.split(':').map(Number);
             if (currentH === sh && currentM === sm) {
@@ -310,9 +317,18 @@ export default function Dashboard() {
               if (!notifiedEventsRef.current.has(notifKey)) {
                 notifiedEventsRef.current.add(notifKey);
                 playPremiumChime(false);
+                
+                // Show On-Screen Modal Popup
+                setUrgentPopupAlert({
+                  task,
+                  alertType: 'start',
+                  timeStr: task.start_time,
+                });
+
+                // Desktop OS Notification
                 if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                   new Notification(`🚀 Starting Now: ${task.title}`, {
-                    body: `Time: ${task.start_time}`,
+                    body: `Start Time: ${task.start_time}`,
                     icon: '/favicon.ico',
                   });
                 }
@@ -320,7 +336,7 @@ export default function Dashboard() {
             }
           }
 
-          // Due notification
+          // ⏰ 2. EXACT DUE TIME ALARM POPUP
           if (task.due_time) {
             const [dh, dm] = task.due_time.split(':').map(Number);
             if (currentH === dh && currentM === dm) {
@@ -328,9 +344,18 @@ export default function Dashboard() {
               if (!notifiedEventsRef.current.has(notifKey)) {
                 notifiedEventsRef.current.add(notifKey);
                 playPremiumChime(true);
+
+                // Show On-Screen Modal Popup
+                setUrgentPopupAlert({
+                  task,
+                  alertType: 'due',
+                  timeStr: task.due_time,
+                });
+
+                // Desktop OS Notification
                 if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                   new Notification(`⏰ Due Right Now: ${task.title}`, {
-                    body: `Due Time: ${task.due_time}`,
+                    body: `Due Time: ${task.due_time}\nPriority: ${task.priority}`,
                     icon: '/favicon.ico',
                   });
                 }
@@ -404,7 +429,7 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfDay(startOfWeek(new Date(), { weekStartsOn: 0 })), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  // Active Reminders
+  // Active Reminders: Track both Start Time & Due Time
   const activeReminders = useMemo(() => {
     if (!mounted) return [];
     const reminders: ActiveReminder[] = [];
@@ -416,21 +441,37 @@ export default function Dashboard() {
       if (compDates.includes(todayStr) || cancDates.includes(todayStr)) return;
       if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled')) return;
 
-      if (!task.due_date) return;
+      // 1. Check Start Time Alarm
+      if (task.start_time) {
+        const startDateTime = new Date(`${todayStr}T${task.start_time}:00`);
+        const startDiff = differenceInMinutes(startDateTime, currentTime);
+        if (startDiff <= 30 && startDiff >= -15) {
+          if (!dismissedReminders.has(`${task.id}-start`)) {
+            reminders.push({
+              task,
+              diffMinutes: startDiff,
+              timeLabel: formatTimeDifference(startDiff, 'start'),
+              isOverdue: false,
+              typeLabel: 'start',
+            });
+          }
+        }
+      }
 
-      const dueDateTimeStr = task.due_time ? `${todayStr}T${task.due_time}:00` : `${todayStr}T23:59:59`;
-      const taskDueDateTime = new Date(dueDateTimeStr);
-      const diffMinutes = differenceInMinutes(taskDueDateTime, currentTime);
-
-      if (diffMinutes <= 60 && diffMinutes >= -120) {
-        if (!dismissedReminders.has(task.id)) {
-          reminders.push({
-            task,
-            diffMinutes,
-            timeLabel: formatTimeDifference(diffMinutes),
-            isOverdue: diffMinutes < 0,
-            typeLabel: 'due',
-          });
+      // 2. Check Due Time Alarm
+      if (task.due_time) {
+        const dueDateTime = new Date(`${todayStr}T${task.due_time}:00`);
+        const dueDiff = differenceInMinutes(dueDateTime, currentTime);
+        if (dueDiff <= 60 && dueDiff >= -120) {
+          if (!dismissedReminders.has(`${task.id}-due`)) {
+            reminders.push({
+              task,
+              diffMinutes: dueDiff,
+              timeLabel: formatTimeDifference(dueDiff, 'due'),
+              isOverdue: dueDiff < 0,
+              typeLabel: 'due',
+            });
+          }
         }
       }
     });
@@ -541,7 +582,6 @@ export default function Dashboard() {
     }
   };
 
-  // 🎯 INDIVIDUAL DAY INSTANCE STATUS MANAGER
   const handleSetInstanceStatus = async (status: 'Active' | 'Completed' | 'Cancelled') => {
     if (!selectedInstance) return;
     const { task, dateStr } = selectedInstance;
@@ -694,34 +734,110 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative" onClick={enableAudio}>
       
-      {/* 🚀 LIVE ACTIVE REMINDERS */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP (START TIME & DUE TIME) */}
+      {urgentPopupAlert && (
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in zoom-in-95 duration-200">
+          <div className={`bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border-2 transform transition-all ${
+            urgentPopupAlert.alertType === 'start' ? 'border-blue-500 ring-4 ring-blue-500/20' : 'border-rose-500 ring-4 ring-rose-500/20'
+          }`}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`p-3 rounded-2xl ${urgentPopupAlert.alertType === 'start' ? 'bg-blue-600 text-white animate-bounce' : 'bg-rose-600 text-white animate-pulse'}`}>
+                  {urgentPopupAlert.alertType === 'start' ? <PlayCircle className="w-6 h-6" /> : <Bell className="w-6 h-6" />}
+                </div>
+                <div>
+                  <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
+                    urgentPopupAlert.alertType === 'start' ? 'bg-blue-100 text-blue-800' : 'bg-rose-100 text-rose-800'
+                  }`}>
+                    {urgentPopupAlert.alertType === 'start' ? '🚀 Starting Now!' : '⏰ Due Right Now!'}
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900 mt-1">{urgentPopupAlert.task.title}</h3>
+                </div>
+              </div>
+              <button onClick={() => setUrgentPopupAlert(null)} className="text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-100"><X className="w-5 h-5" /></button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 my-4 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500 font-medium">Scheduled Time:</span>
+                <span className="font-bold text-slate-800 bg-white px-2.5 py-1 rounded-lg border shadow-2xs">{urgentPopupAlert.timeStr}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-500 font-medium">Priority:</span>
+                <span className={`font-bold px-2 py-0.5 rounded ${PRIORITY_STYLES[urgentPopupAlert.task.priority]}`}>{urgentPopupAlert.task.priority}</span>
+              </div>
+              {urgentPopupAlert.task.meet_link && (
+                <div className="pt-2 border-t border-slate-200/60">
+                  <a
+                    href={urgentPopupAlert.task.meet_link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold shadow-md shadow-violet-500/20 transition"
+                  >
+                    <Video className="w-4 h-4" /> Join Google Meet Now <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const t = urgentPopupAlert.task;
+                  setUrgentPopupAlert(null);
+                  setActiveTask(t);
+                }}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+              >
+                View Details
+              </button>
+              <button
+                onClick={() => setUrgentPopupAlert(null)}
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
+              >
+                Acknowledge & Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🚀 LIVE ACTIVE FLOATING ALERTS (BOTTOM RIGHT) */}
+      <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
         {activeReminders.map((reminder) => (
           <div
-            key={reminder.task.id}
+            key={`${reminder.task.id}-${reminder.typeLabel}`}
             onClick={() => setActiveTask(reminder.task)}
             className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 active:scale-98 animate-in slide-in-from-right-10 group ${
-              reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500/30' : 'bg-white/95 border-amber-300 text-slate-900 shadow-amber-500/10'
+              reminder.typeLabel === 'start' 
+                ? 'bg-blue-50/95 border-blue-300 text-blue-950 ring-2 ring-blue-500/30'
+                : reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500/30' : 'bg-white/95 border-amber-300 text-slate-900 shadow-amber-500/10'
             }`}
           >
-            <div className={`p-2.5 rounded-xl shrink-0 shadow-sm transition-transform group-hover:scale-110 ${reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-amber-500 text-white animate-pulse'}`}>
-              <Bell className="w-4 h-4" />
+            <div className={`p-2.5 rounded-xl shrink-0 shadow-sm transition-transform group-hover:scale-110 ${
+              reminder.typeLabel === 'start' ? 'bg-blue-600 text-white animate-pulse' : reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-amber-500 text-white animate-pulse'
+            }`}>
+              {reminder.typeLabel === 'start' ? <PlayCircle className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
             </div>
 
             <div className="flex-1 overflow-hidden">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">{reminder.task.title}</h4>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-amber-100 text-amber-800 border border-amber-200'}`}>
-                  {reminder.task.due_time || 'Today'}
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  reminder.typeLabel === 'start' ? 'bg-blue-200 text-blue-800' : reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-amber-100 text-amber-800 border border-amber-200'
+                }`}>
+                  {reminder.typeLabel === 'start' ? reminder.task.start_time : reminder.task.due_time || 'Today'}
                 </span>
               </div>
-              <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>{reminder.isOverdue ? '🚨 OVERDUE: ' : '⏳ '}{reminder.timeLabel}</p>
-              <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100">
-                <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">Click to edit</span>
+              <p className={`text-xs font-bold mt-1 ${reminder.typeLabel === 'start' ? 'text-blue-700' : reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>
+                {reminder.typeLabel === 'start' ? '🚀 ' : reminder.isOverdue ? '🚨 ' : '⏳ '}{reminder.timeLabel}
+              </p>
+              <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-black/5">
+                <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">Click to view/edit</span>
               </div>
             </div>
 
-            <button onClick={(e) => { e.stopPropagation(); setDismissedReminders((prev) => new Set([...prev, reminder.task.id])); }} className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 shrink-0 transition" title="Dismiss">
+            <button onClick={(e) => { e.stopPropagation(); setDismissedReminders((prev) => new Set([...prev, `${reminder.task.id}-${reminder.typeLabel}`])); }} className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 shrink-0 transition" title="Dismiss">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -729,7 +845,7 @@ export default function Dashboard() {
       </div>
 
       {/* 1. TOP HEADER & FILTERS */}
-      <header className="bg-white border-b border-slate-200 px-6 py-3.5 sticky top-0 z-40 shadow-xs">
+      <header className="bg-white border-b border-slate-200 px-6 py-3.5 sticky top-0 z-30 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-blue-600 text-white p-2 rounded-xl shadow-xs">
@@ -812,7 +928,7 @@ export default function Dashboard() {
           {liveIndicatorPosition !== null && (
             <div 
               style={{ left: `calc(400px + ${liveIndicatorPosition}px)` }} 
-              className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+              className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-20 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.8)]"
             >
               <div className="sticky top-11 -ml-[4px] w-2.5 h-2.5 rounded-full bg-rose-600 ring-4 ring-rose-200 animate-pulse" />
             </div>
@@ -1032,7 +1148,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 🎯 POPUP: MANAGE SPECIFIC DAY INSTANCE (ISOLATED OCCURRENCE) */}
+      {/* 🎯 POPUP: MANAGE SPECIFIC DAY INSTANCE */}
       {selectedInstance && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-100">
@@ -1045,7 +1161,7 @@ export default function Dashboard() {
             </div>
 
             <p className="text-xs text-slate-600 mb-4">
-              Change the status for <b>this occurrence only</b>. Other weekly/daily schedules will stay active.
+              Change status for <b>this occurrence only</b>. Other recurring days will remain active.
             </p>
 
             <div className="space-y-2">
