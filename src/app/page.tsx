@@ -138,21 +138,17 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
       
       {/* Comprehensive Word-Like Toolbar */}
       <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-100/80 border-b border-slate-200 select-none">
-        
-        {/* History */}
         <button type="button" onClick={() => exec('undo')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Undo"><Undo className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('redo')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Redo"><Redo className="w-3.5 h-3.5" /></button>
         
         <div className="w-[1px] h-4 bg-slate-300 mx-1" />
 
-        {/* Headings */}
         <button type="button" onClick={() => exec('formatBlock', '<h1>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Large Heading"><Heading1 className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('formatBlock', '<h2>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Medium Heading"><Heading2 className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('formatBlock', '<p>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Normal Paragraph"><Type className="w-3.5 h-3.5" /></button>
 
         <div className="w-[1px] h-4 bg-slate-300 mx-1" />
 
-        {/* Basic Styles */}
         <button type="button" onClick={() => exec('bold')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 font-bold transition" title="Bold"><Bold className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('italic')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 italic transition" title="Italic"><Italic className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('underline')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 underline transition" title="Underline"><Underline className="w-3.5 h-3.5" /></button>
@@ -160,13 +156,11 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
 
         <div className="w-[1px] h-4 bg-slate-300 mx-1" />
 
-        {/* Text Color Picker */}
         <label className="flex items-center gap-0.5 p-1 hover:bg-slate-200 rounded cursor-pointer text-slate-700" title="Text Color">
           <Palette className="w-3.5 h-3.5 text-blue-600" />
           <input type="color" className="w-4 h-4 p-0 border-0 bg-transparent cursor-pointer" onChange={(e) => exec('foreColor', e.target.value)} />
         </label>
 
-        {/* Highlight Background Color Picker */}
         <label className="flex items-center gap-0.5 p-1 hover:bg-slate-200 rounded cursor-pointer text-slate-700" title="Highlight Color">
           <Highlighter className="w-3.5 h-3.5 text-amber-500" />
           <input type="color" className="w-4 h-4 p-0 border-0 bg-transparent cursor-pointer" defaultValue="#fef08a" onChange={(e) => exec('hiliteColor', e.target.value)} />
@@ -174,7 +168,6 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
 
         <div className="w-[1px] h-4 bg-slate-300 mx-1" />
 
-        {/* Alignment */}
         <button type="button" onClick={() => exec('justifyLeft')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Align Left"><AlignLeft className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('justifyCenter')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Align Center"><AlignCenter className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('justifyRight')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Align Right"><AlignRight className="w-3.5 h-3.5" /></button>
@@ -182,7 +175,6 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
 
         <div className="w-[1px] h-4 bg-slate-300 mx-1" />
 
-        {/* Lists & Table */}
         <button type="button" onClick={() => exec('insertUnorderedList')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Bullet List"><List className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('insertOrderedList')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Numbered List"><ListOrdered className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={insertTable} className="flex items-center gap-1 px-2 py-1 bg-white hover:bg-slate-200 border border-slate-300 rounded text-xs font-bold text-slate-700 shadow-2xs transition" title="Insert Table">
@@ -191,19 +183,18 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
 
         <div className="w-[1px] h-4 bg-slate-300 mx-1" />
 
-        {/* Code, Quote, Clear */}
         <button type="button" onClick={() => exec('formatBlock', '<blockquote>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Quote"><Quote className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('formatBlock', '<pre>')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Code Block"><Code className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('removeFormat')} className="p-1.5 hover:bg-slate-200 rounded text-rose-600 transition" title="Clear Formatting"><RemoveFormatting className="w-3.5 h-3.5" /></button>
       </div>
 
-      {/* Editable Interactive Viewport */}
+      {/* Editable Viewport (Fixed: removed invalid placeholder prop) */}
       <div
         ref={editorRef}
         contentEditable
+        suppressContentEditableWarning
         onInput={(e) => onChange(e.currentTarget.innerHTML)}
         className="p-4 min-h-[140px] max-h-[260px] overflow-y-auto text-xs text-slate-900 outline-none prose prose-sm max-w-none focus:bg-white [&_table]:border-collapse [&_th]:border [&_th]:border-slate-300 [&_th]:p-2 [&_th]:bg-slate-100 [&_td]:border [&_td]:border-slate-300 [&_td]:p-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
-        placeholder="Type details, format headings, colors, bullet points or insert dynamic tables..."
       />
     </div>
   );
