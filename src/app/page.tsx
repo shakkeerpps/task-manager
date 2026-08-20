@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { format, addDays, startOfWeek, differenceInDays, isToday, parseISO, getDay, getDate, differenceInMinutes } from 'date-fns';
+import { format, addDays, startOfWeek, isToday, parseISO, getDay, getDate, differenceInMinutes, startOfDay } from 'date-fns';
 import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell, CheckCircle2 } from 'lucide-react';
 
 interface Department {
@@ -66,13 +66,13 @@ const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'F
 const formatTimeDifference = (diffMinutes: number) => {
   if (diffMinutes >= 0) {
     if (diffMinutes === 0) return 'Due right now!';
-    if (diffMinutes < 60) return `${diffMinutes} min${diffMinutes === 1 ? '' : 's'} remaining`;
+    if (diffMinutes < 60) return `${diffMinutes} min remaining`;
     const hrs = Math.floor(diffMinutes / 60);
     const mins = diffMinutes % 60;
     return `${hrs}h ${mins}m remaining`;
   } else {
     const overdueMins = Math.abs(diffMinutes);
-    if (overdueMins < 60) return `Overdue by ${overdueMins} min${overdueMins === 1 ? '' : 's'}`;
+    if (overdueMins < 60) return `Overdue by ${overdueMins} min`;
     const hrs = Math.floor(overdueMins / 60);
     const mins = overdueMins % 60;
     return `Overdue by ${hrs}h ${mins}m`;
@@ -89,7 +89,6 @@ export default function Dashboard() {
   const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set());
   const soundPlayedRef = useRef<Set<string>>(new Set());
 
-  // Audio Context Setup
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const enableAudio = useCallback(() => {
@@ -130,11 +129,10 @@ export default function Dashboard() {
         osc.stop(ctx.currentTime + idx * 0.12 + 0.65);
       });
     } catch (e) {
-      console.error("Audio playback failed:", e);
+      console.error("Audio playback error:", e);
     }
   }, []);
 
-  // Filters
   const [search, setSearch] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
@@ -142,13 +140,11 @@ export default function Dashboard() {
   const [filterToDate, setFilterToDate] = useState('');
   const [activeQuickFilter, setActiveQuickFilter] = useState<'today' | 'overdue' | null>(null);
 
-  // Modals
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeptModal, setShowDeptModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
-  // Form States
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptColor, setNewDeptColor] = useState('#2563eb');
   
@@ -180,7 +176,7 @@ export default function Dashboard() {
     description: '',
   });
 
-  const timelineStart = useMemo(() => startOfWeek(new Date(), { weekStartsOn: 0 }), []);
+  const timelineStart = useMemo(() => startOfDay(startOfWeek(new Date(), { weekStartsOn: 0 })), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
   useEffect(() => {
@@ -192,7 +188,6 @@ export default function Dashboard() {
     }
   }, []);
 
-  // ⏱️ Second-by-Second Live Clock Update
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
@@ -205,9 +200,7 @@ export default function Dashboard() {
     const reminders: ActiveReminder[] = [];
 
     tasks.forEach((task) => {
-      if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') {
-        return;
-      }
+      if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') return;
       if (!task.due_date) return;
 
       const dueDateTimeStr = task.due_time ? `${task.due_date}T${task.due_time}:00` : `${task.due_date}T23:59:59`;
@@ -371,11 +364,8 @@ export default function Dashboard() {
   const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date || t.due_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
   const overdueCount = useMemo(() => tasks.filter((t) => parseISO(t.due_date) < new Date() && t.status !== 'Completed' && t.status !== 'Resolved' && t.status !== 'Cancelled').length, [tasks]);
 
-  // 🔴 High Precision Live Current Time Indicator Line Position (Including Seconds)
-  const currentDayIndex = differenceInDays(new Date(), timelineStart);
-  const currentSecondsInDay = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
-  const currentSecondsRatio = currentSecondsInDay / 86400; // 0 to 1 ratio of the day
-  const liveIndicatorPosition = mounted && currentDayIndex >= 0 && currentDayIndex < 21 ? (currentDayIndex + currentSecondsRatio) * 60 : null;
+  const elapsedDays = (currentTime.getTime() - timelineStart.getTime()) / 86400000;
+  const liveIndicatorPosition = mounted && elapsedDays >= 0 && elapsedDays < 21 ? elapsedDays * 60 : null;
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
@@ -442,7 +432,9 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-slate-900 leading-tight">Project Timeline Hub</h1>
-              <p className="text-xs text-slate-500">{mounted ? `Live Time: ${format(currentTime, 'hh:mm:ss a')} • ` : ''}{filteredTasks.length} Showing</p>
+              <p className="text-xs text-slate-500">
+                {mounted ? `Live Time: ${format(currentTime, 'hh:mm:ss a')} • ` : ''}{filteredTasks.length} Showing
+              </p>
             </div>
           </div>
 
@@ -498,11 +490,11 @@ export default function Dashboard() {
       <div className="flex-1 overflow-x-auto overflow-y-auto">
         <div className="min-w-[1680px] relative">
           
-          {/* LIVE CURRENT TIME INDICATOR LINE (Calculates down to exact second) */}
+          {/* 🔴 LIVE CURRENT TIME RED LINE */}
           {liveIndicatorPosition !== null && (
             <div 
               style={{ left: `calc(400px + ${liveIndicatorPosition}px)` }} 
-              className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.7)] transition-all duration-300"
+              className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.8)]"
             >
               <div className="sticky top-11 -ml-[4px] w-2.5 h-2.5 rounded-full bg-rose-600 ring-4 ring-rose-200 animate-pulse" />
             </div>
@@ -544,13 +536,12 @@ export default function Dashboard() {
                     ) : (
                       deptTasks.map((task) => {
                         const effectiveStart = task.start_date || task.due_date;
-                        const taskStart = parseISO(effectiveStart);
-                        const taskEnd = parseISO(task.due_date);
+                        const startParsed = startOfDay(parseISO(effectiveStart));
+                        const endParsed = startOfDay(parseISO(task.due_date));
                         
-                        const rawStartDay = differenceInDays(taskStart, timelineStart);
-                        const rawEndDay = differenceInDays(taskEnd, timelineStart);
+                        const rawStartDay = (startParsed.getTime() - timelineStart.getTime()) / 86400000;
+                        const rawEndDay = (endParsed.getTime() - timelineStart.getTime()) / 86400000;
 
-                        // ⏱️ Sub-Day Exact Offset Calculation using Start Time & Due Time
                         let startFraction = 0;
                         if (task.start_time) {
                           const [sh, sm] = task.start_time.split(':').map(Number);
@@ -565,9 +556,9 @@ export default function Dashboard() {
 
                         const exactStartPos = (rawStartDay + startFraction) * 60;
                         const exactEndPos = (rawEndDay + endFraction) * 60;
-                        const exactWidth = Math.max(18, exactEndPos - exactStartPos);
-
-                        const isVisible = exactEndPos > 0 && exactStartPos < (21 * 60);
+                        const exactWidth = Math.max(8, exactEndPos - exactStartPos);
+                        const isVisible = (rawEndDay + 1) >= 0 && rawStartDay < 21;
+                        const isNarrow = exactWidth < 80;
 
                         return (
                           <div key={task.id} onClick={() => setActiveTask(task)} className="grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 cursor-pointer group transition relative">
@@ -593,28 +584,54 @@ export default function Dashboard() {
                             </div>
 
                             <div className="col-span-21 relative h-full flex items-center">
+                              {/* 1. ONCE TASKS TIMELINE BAR */}
                               {task.frequency === 'once' && isVisible && (
-                                <div
-                                  style={{ 
-                                    left: `${exactStartPos + 1}px`, 
-                                    width: `${exactWidth - 2}px` 
-                                  }}
-                                  className={`absolute h-7 rounded-md px-2 flex items-center text-xs font-semibold shadow-2xs overflow-hidden transition ${
-                                    task.status === 'Completed' || task.status === 'Resolved' ? 'bg-emerald-50 border border-emerald-300 text-emerald-800' : task.status === 'Blocked' ? 'bg-rose-50 border border-rose-300 text-rose-800' : 'bg-indigo-50 border border-indigo-300 text-indigo-800 hover:ring-2 hover:ring-indigo-400'
-                                  }`}
-                                  title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
-                                >
-                                  <span className="truncate">{task.title}</span>
-                                  {(task.start_time || task.due_time) && (
-                                    <span className="ml-1.5 px-1.5 py-0.5 bg-indigo-200/80 text-[10px] font-bold rounded-full text-indigo-950 whitespace-nowrap shrink-0">
-                                      {task.start_time ? format(parseISO(`2023-01-01T${task.start_time}`), 'hh:mm a') : ''}
-                                      {task.start_time && task.due_time ? ' - ' : ''}
-                                      {task.due_time ? format(parseISO(`2023-01-01T${task.due_time}`), 'hh:mm a') : ''}
-                                    </span>
+                                <>
+                                  <div
+                                    style={{ 
+                                      left: `${exactStartPos}px`, 
+                                      width: `${exactWidth}px` 
+                                    }}
+                                    className={`absolute h-6 rounded-md px-1.5 flex items-center shadow-xs transition z-10 ${
+                                      task.status === 'Completed' || task.status === 'Resolved' 
+                                        ? 'bg-emerald-500 text-white' 
+                                        : task.status === 'Blocked' 
+                                        ? 'bg-rose-500 text-white' 
+                                        : 'bg-indigo-600 text-white hover:ring-2 hover:ring-indigo-300'
+                                    }`}
+                                    title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
+                                  >
+                                    {!isNarrow && (
+                                      <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-semibold">
+                                        <span className="truncate pr-1">{task.title}</span>
+                                        {(task.start_time || task.due_time) && (
+                                          <span className="px-1 py-0.2 bg-black/20 text-[9px] rounded whitespace-nowrap shrink-0">
+                                            {task.due_time || task.start_time}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {isNarrow && (
+                                    <div 
+                                      style={{ left: `${exactEndPos + 4}px` }} 
+                                      className="absolute flex items-center gap-1.5 text-xs font-semibold text-slate-800 whitespace-nowrap z-0 pointer-events-none"
+                                    >
+                                      <span>{task.title}</span>
+                                      {(task.start_time || task.due_time) && (
+                                        <span className="px-1.5 py-0.5 bg-slate-200 text-slate-700 text-[10px] rounded-full font-bold">
+                                          {task.start_time ? task.start_time : ''}
+                                          {task.start_time && task.due_time ? ' - ' : ''}
+                                          {task.due_time ? task.due_time : ''}
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
-                                </div>
+                                </>
                               )}
 
+                              {/* 2. RECURRING TASKS (Daily, Weekly, Monthly) TIMELINE BAR WITH EXACT TIME */}
                               {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
                                 let shouldShow = false;
                                 if (task.frequency === 'daily') shouldShow = true;
@@ -622,10 +639,44 @@ export default function Dashboard() {
                                 else if (task.frequency === 'monthly' && task.recurring_date) shouldShow = getDate(dayDate) === Number(task.recurring_date);
                                 if (!shouldShow) return null;
 
+                                const recStartPos = (dayIdx + startFraction) * 60;
+                                const recEndPos = (dayIdx + endFraction) * 60;
+                                const recWidth = Math.max(8, recEndPos - recStartPos);
+                                const recIsNarrow = recWidth < 80;
+
                                 return (
-                                  <div key={dayIdx} style={{ left: `${dayIdx * 60 + 4}px`, width: '52px' }} className="absolute h-7 rounded bg-blue-50 border border-blue-300 text-blue-800 px-1 flex items-center justify-center text-[10px] font-bold shadow-2xs truncate" title={`Recurring: ${task.title}`}>
-                                    {task.title}
-                                  </div>
+                                  <React.Fragment key={dayIdx}>
+                                    <div
+                                      style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
+                                      className="absolute h-6 rounded-md px-1.5 flex items-center bg-blue-600 text-white shadow-xs z-10 transition hover:ring-2 hover:ring-blue-300"
+                                      title={`Recurring: ${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
+                                    >
+                                      {!recIsNarrow && (
+                                        <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-semibold">
+                                          <span className="truncate pr-1">{task.title}</span>
+                                          {(task.start_time || task.due_time) && (
+                                            <span className="px-1 py-0.2 bg-black/20 text-[9px] rounded whitespace-nowrap shrink-0">
+                                              {task.due_time || task.start_time}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {recIsNarrow && (
+                                      <div 
+                                        style={{ left: `${recEndPos + 4}px` }} 
+                                        className="absolute flex items-center gap-1 text-[11px] font-semibold text-slate-800 whitespace-nowrap z-0 pointer-events-none"
+                                      >
+                                        <span className="truncate max-w-[80px]">{task.title}</span>
+                                        {(task.start_time || task.due_time) && (
+                                          <span className="px-1.5 py-0.2 bg-blue-100 text-blue-900 text-[9px] rounded-full font-bold">
+                                            {task.due_time || task.start_time}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </React.Fragment>
                                 );
                               })}
                             </div>
