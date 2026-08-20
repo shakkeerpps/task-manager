@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { format, addDays, startOfWeek, isToday, parseISO, getDay, getDate, differenceInMinutes, startOfDay } from 'date-fns';
+import { format, addDays, startOfWeek, isToday, parseISO, getDay, getDate, differenceInSeconds, startOfDay } from 'date-fns';
 import { 
   Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, 
   Repeat, Bell, CheckCircle2, Video, Eye, EyeOff, Users, Mail, Edit3, 
@@ -53,7 +53,7 @@ interface HistoryItem {
 
 interface ActiveReminder {
   task: Task;
-  diffMinutes: number;
+  diffSeconds: number;
   timeLabel: string;
   isOverdue: boolean;
   typeLabel: 'start' | 'due' | 'start-pre' | 'due-pre';
@@ -68,9 +68,9 @@ interface SelectedInstance {
 
 interface UrgentPopupAlert {
   task: Task;
-  alertType: 'start' | 'due' | 'start-pre' | 'due-pre';
+  alertType: 'start' | 'due';
   timeStr: string;
-  customMessage: string;
+  message: string;
 }
 
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
@@ -91,22 +91,6 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 };
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-const formatTimeDifference = (diffMinutes: number, type: string) => {
-  if (diffMinutes >= 0) {
-    if (diffMinutes === 0) return type.includes('start') ? 'Starting right now!' : 'Due right now!';
-    if (diffMinutes < 60) return type.includes('start') ? `Starts in ${diffMinutes}m` : `${diffMinutes}m remaining`;
-    const hrs = Math.floor(diffMinutes / 60);
-    const mins = diffMinutes % 60;
-    return type.includes('start') ? `Starts in ${hrs}h ${mins}m` : `${hrs}h ${mins}m remaining`;
-  } else {
-    const passedMins = Math.abs(diffMinutes);
-    if (passedMins < 60) return type.includes('start') ? `Started ${passedMins}m ago` : `Overdue by ${passedMins}m`;
-    const hrs = Math.floor(passedMins / 60);
-    const mins = passedMins % 60;
-    return type.includes('start') ? `Started ${hrs}h ${mins}m ago` : `Overdue by ${hrs}h ${mins}m`;
-  }
-};
 
 // 🎨 ADVANCED WORD-STYLE RICH TEXT & TABLE EDITOR
 function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
@@ -231,52 +215,88 @@ export default function Dashboard() {
   const [selectedInstance, setSelectedInstance] = useState<SelectedInstance | null>(null);
   const [urgentPopupAlert, setUrgentPopupAlert] = useState<UrgentPopupAlert | null>(null);
 
-  const enableAudio = useCallback(() => {
-    if (!audioContextRef.current) {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioContextClass) {
-        audioContextRef.current = new AudioContextClass();
+  // 🔊 UNLOCK & PLAY AGGRESSIVE MULTI-FREQUENCY LOUD ALARM
+  const unlockAudio = useCallback(() => {
+    try {
+      if (!audioContextRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          audioContextRef.current = new AudioContextClass();
+        }
       }
-    }
-    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
+    } catch (e) {
+      console.error("Audio unlock error:", e);
     }
   }, []);
 
-  // 🔊 LOUD AGGRESSIVE ALARM SOUND GENERATOR
-  const playAggressiveAlarm = useCallback((urgencyLevel: 'warning' | 'critical') => {
+  useEffect(() => {
+    // Globally unlock audio on any user interaction with the window
+    const handleUserGesture = () => unlockAudio();
+    window.addEventListener('click', handleUserGesture);
+    window.addEventListener('keydown', handleUserGesture);
+    window.addEventListener('touchstart', handleUserGesture);
+    return () => {
+      window.removeEventListener('click', handleUserGesture);
+      window.removeEventListener('keydown', handleUserGesture);
+      window.removeEventListener('touchstart', handleUserGesture);
+    };
+  }, [unlockAudio]);
+
+  const playAlarmSound = useCallback((mode: 'exact-alarm' | 'warning-beep') => {
     try {
-      enableAudio();
+      unlockAudio();
       const ctx = audioContextRef.current;
       if (!ctx) return;
       if (ctx.state === 'suspended') ctx.resume();
 
-      // Multi-burst aggressive alarm tones
-      const sequence = urgencyLevel === 'critical'
-        ? [1000, 1500, 1000, 1500, 1800, 2000] // Critical rapid siren
-        : [800, 1100, 800, 1100]; // 3-Min Warning Beep
+      if (mode === 'exact-alarm') {
+        // High-volume piercing sawtooth alarm (alternating siren)
+        const sirenPitches = [900, 1400, 900, 1400, 1800, 1400];
+        sirenPitches.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
 
-      sequence.forEach((freq, idx) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.15);
 
-        osc.type = urgencyLevel === 'critical' ? 'sawtooth' : 'square';
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.12);
+          gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.15);
+          gain.gain.linearRampToValueAtTime(0.5, ctx.currentTime + idx * 0.15 + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.15 + 0.14);
 
-        gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.12);
-        gain.gain.linearRampToValueAtTime(0.4, ctx.currentTime + idx * 0.12 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.12 + 0.10);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + idx * 0.15);
+          osc.stop(ctx.currentTime + idx * 0.15 + 0.15);
+        });
+      } else {
+        // 3-Minute Warning Beep (2 double beeps)
+        const warningPitches = [700, 1000];
+        warningPitches.forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
 
-        osc.start(ctx.currentTime + idx * 0.12);
-        osc.stop(ctx.currentTime + idx * 0.12 + 0.11);
-      });
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.18);
+
+          gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.18);
+          gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + idx * 0.18 + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.18 + 0.14);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start(ctx.currentTime + idx * 0.18);
+          osc.stop(ctx.currentTime + idx * 0.18 + 0.15);
+        });
+      }
     } catch (e) {
-      console.error("Audio error:", e);
+      console.error("Audio playback error:", e);
     }
-  }, [enableAudio]);
+  }, [unlockAudio]);
 
   // Request Notification Permission
   useEffect(() => {
@@ -288,7 +308,7 @@ export default function Dashboard() {
     }
   }, []);
 
-  // 1-Second Master Realtime Listener: 3-Min Pre-Alerts & Exact Start/Due Alarms
+  // 1-Second Master Realtime Listener: 3-Min Warning & Exact Start/Due Alarms
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
@@ -297,147 +317,131 @@ export default function Dashboard() {
       const todayStr = format(now, 'yyyy-MM-dd');
       const currentH = now.getHours();
       const currentM = now.getMinutes();
-      const currentS = now.getSeconds();
-      const currentTotalSec = currentH * 3600 + currentM * 60 + currentS;
 
-      if (currentS === 0) { // Evaluate on each minute start
-        tasks.forEach((task) => {
-          const compDates = task.completed_dates || [];
-          const cancDates = task.cancelled_dates || [];
-          if (compDates.includes(todayStr) || cancDates.includes(todayStr)) return;
-          if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Cancelled' || task.status === 'Resolved')) return;
+      tasks.forEach((task) => {
+        const compDates = task.completed_dates || [];
+        const cancDates = task.cancelled_dates || [];
+        if (compDates.includes(todayStr) || cancDates.includes(todayStr)) return;
+        if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Cancelled' || task.status === 'Resolved')) return;
 
-          let isApplicableToday = false;
-          if (task.frequency === 'once' && (task.start_date === todayStr || task.due_date === todayStr)) isApplicableToday = true;
-          else if (task.frequency === 'daily') isApplicableToday = true;
-          else if (task.frequency === 'weekly' && task.recurring_day === DAYS_OF_WEEK[getDay(now)]) isApplicableToday = true;
-          else if (task.frequency === 'monthly' && Number(task.recurring_date) === getDate(now)) isApplicableToday = true;
+        let isApplicableToday = false;
+        if (task.frequency === 'once' && (task.start_date === todayStr || task.due_date === todayStr)) isApplicableToday = true;
+        else if (task.frequency === 'daily') isApplicableToday = true;
+        else if (task.frequency === 'weekly' && task.recurring_day === DAYS_OF_WEEK[getDay(now)]) isApplicableToday = true;
+        else if (task.frequency === 'monthly' && Number(task.recurring_date) === getDate(now)) isApplicableToday = true;
 
-          if (!isApplicableToday) return;
+        if (!isApplicableToday) return;
 
-          // -------------------------------------------------------------
-          // 🚀 1. START TIME CHECKS (3 MINS BEFORE & EXACT START TIME)
-          // -------------------------------------------------------------
-          if (task.start_time) {
-            const [sh, sm] = task.start_time.split(':').map(Number);
-            const startTotalSec = (sh * 60 + sm) * 60;
-            const diffSec = startTotalSec - currentTotalSec;
+        // -------------------------------------------------------------
+        // 🚀 1. START TIME (3 MINS PRE-ALERT & EXACT 00:00 START)
+        // -------------------------------------------------------------
+        if (task.start_time) {
+          const [sh, sm] = task.start_time.split(':').map(Number);
+          const startTargetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm, 0);
+          const diffSec = differenceInSeconds(startTargetDate, now);
 
-            // A. Exactly 3 Minutes Before Start (180 seconds before)
-            if (diffSec === 180) {
-              const notifKey = `start-pre3-${task.id}-${todayStr}-${task.start_time}`;
-              if (!notifiedEventsRef.current.has(notifKey)) {
-                notifiedEventsRef.current.add(notifKey);
-                playAggressiveAlarm('warning');
+          // A. Exactly 3 Minutes Warning (between 175 and 180 seconds)
+          if (diffSec <= 180 && diffSec >= 170) {
+            const notifKey = `start-pre3-${task.id}-${todayStr}-${task.start_time}`;
+            if (!notifiedEventsRef.current.has(notifKey)) {
+              notifiedEventsRef.current.add(notifKey);
+              playAlarmSound('warning-beep');
 
-                setUrgentPopupAlert({
-                  task,
-                  alertType: 'start-pre',
-                  timeStr: task.start_time,
-                  customMessage: 'Starting in 3 minutes! Prepare yourself.',
+              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                const n = new Notification(`⚠️ Starts in 3 Mins: ${task.title}`, {
+                  body: `Scheduled at ${task.start_time}. Get ready!`,
+                  icon: '/favicon.ico',
+                  requireInteraction: true,
                 });
-
-                if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-                  const n = new Notification(`⚠️ Starting in 3 Mins: ${task.title}`, {
-                    body: `Scheduled at ${task.start_time}. Get ready!`,
-                    icon: '/favicon.ico',
-                    requireInteraction: true,
-                  });
-                  n.onclick = () => { window.focus(); setActiveTask(task); };
-                }
-              }
-            }
-
-            // B. Exact Start Time (0 seconds diff)
-            if (diffSec === 0) {
-              const notifKey = `start-exact-${task.id}-${todayStr}-${task.start_time}`;
-              if (!notifiedEventsRef.current.has(notifKey)) {
-                notifiedEventsRef.current.add(notifKey);
-                playAggressiveAlarm('critical');
-
-                setUrgentPopupAlert({
-                  task,
-                  alertType: 'start',
-                  timeStr: task.start_time,
-                  customMessage: 'Task is starting right now!',
-                });
-
-                if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-                  const n = new Notification(`🚀 STARTING NOW: ${task.title}`, {
-                    body: `Time: ${task.start_time}. Task has begun.`,
-                    icon: '/favicon.ico',
-                    requireInteraction: true,
-                  });
-                  n.onclick = () => { window.focus(); setActiveTask(task); };
-                }
+                n.onclick = () => { window.focus(); setActiveTask(task); };
               }
             }
           }
 
-          // -------------------------------------------------------------
-          // ⏰ 2. DUE TIME CHECKS (3 MINS BEFORE & EXACT DUE TIME)
-          // -------------------------------------------------------------
-          if (task.due_time) {
-            const [dh, dm] = task.due_time.split(':').map(Number);
-            const dueTotalSec = (dh * 60 + dm) * 60;
-            const diffSec = dueTotalSec - currentTotalSec;
+          // B. EXACT START TIME (0 seconds, within 0-5s window)
+          if (diffSec <= 0 && diffSec >= -5) {
+            const notifKey = `start-exact-${task.id}-${todayStr}-${task.start_time}`;
+            if (!notifiedEventsRef.current.has(notifKey)) {
+              notifiedEventsRef.current.add(notifKey);
+              playAlarmSound('exact-alarm');
 
-            // A. Exactly 3 Minutes Before Due Time (180 seconds before)
-            if (diffSec === 180) {
-              const notifKey = `due-pre3-${task.id}-${todayStr}-${task.due_time}`;
-              if (!notifiedEventsRef.current.has(notifKey)) {
-                notifiedEventsRef.current.add(notifKey);
-                playAggressiveAlarm('warning');
+              // Open Center Urgent Modal Popup ONLY on exact time
+              setUrgentPopupAlert({
+                task,
+                alertType: 'start',
+                timeStr: task.start_time,
+                message: 'Task is starting right now!',
+              });
 
-                setUrgentPopupAlert({
-                  task,
-                  alertType: 'due-pre',
-                  timeStr: task.due_time,
-                  customMessage: 'Due in 3 minutes! Wrap up your tasks.',
+              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                const n = new Notification(`🚀 STARTING NOW: ${task.title}`, {
+                  body: `Time: ${task.start_time}. Task has begun.`,
+                  icon: '/favicon.ico',
+                  requireInteraction: true,
                 });
-
-                if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-                  const n = new Notification(`⏳ Due in 3 Mins: ${task.title}`, {
-                    body: `Deadline: ${task.due_time}. Wrap up now!`,
-                    icon: '/favicon.ico',
-                    requireInteraction: true,
-                  });
-                  n.onclick = () => { window.focus(); setActiveTask(task); };
-                }
+                n.onclick = () => { window.focus(); setActiveTask(task); };
               }
             }
+          }
+        }
 
-            // B. Exact Due Time (0 seconds diff)
-            if (diffSec === 0) {
-              const notifKey = `due-exact-${task.id}-${todayStr}-${task.due_time}`;
-              if (!notifiedEventsRef.current.has(notifKey)) {
-                notifiedEventsRef.current.add(notifKey);
-                playAggressiveAlarm('critical');
+        // -------------------------------------------------------------
+        // ⏰ 2. DUE TIME (3 MINS PRE-ALERT & EXACT 00:00 DUE DEADLINE)
+        // -------------------------------------------------------------
+        if (task.due_time) {
+          const [dh, dm] = task.due_time.split(':').map(Number);
+          const dueTargetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), dh, dm, 0);
+          const diffSec = differenceInSeconds(dueTargetDate, now);
 
-                setUrgentPopupAlert({
-                  task,
-                  alertType: 'due',
-                  timeStr: task.due_time,
-                  customMessage: 'Task is due right now! Deadline reached.',
+          // A. Exactly 3 Minutes Before Due Time
+          if (diffSec <= 180 && diffSec >= 170) {
+            const notifKey = `due-pre3-${task.id}-${todayStr}-${task.due_time}`;
+            if (!notifiedEventsRef.current.has(notifKey)) {
+              notifiedEventsRef.current.add(notifKey);
+              playAlarmSound('warning-beep');
+
+              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                const n = new Notification(`⏳ Due in 3 Mins: ${task.title}`, {
+                  body: `Deadline: ${task.due_time}. Wrap up now!`,
+                  icon: '/favicon.ico',
+                  requireInteraction: true,
                 });
-
-                if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-                  const n = new Notification(`⏰ DUE RIGHT NOW: ${task.title}`, {
-                    body: `Due Time: ${task.due_time} • Priority: ${task.priority}`,
-                    icon: '/favicon.ico',
-                    requireInteraction: true,
-                  });
-                  n.onclick = () => { window.focus(); setActiveTask(task); };
-                }
+                n.onclick = () => { window.focus(); setActiveTask(task); };
               }
             }
           }
 
-        });
-      }
+          // B. EXACT DUE TIME (0 seconds)
+          if (diffSec <= 0 && diffSec >= -5) {
+            const notifKey = `due-exact-${task.id}-${todayStr}-${task.due_time}`;
+            if (!notifiedEventsRef.current.has(notifKey)) {
+              notifiedEventsRef.current.add(notifKey);
+              playAlarmSound('exact-alarm');
+
+              // Open Center Urgent Modal Popup ONLY on exact time
+              setUrgentPopupAlert({
+                task,
+                alertType: 'due',
+                timeStr: task.due_time,
+                message: 'Task deadline reached right now!',
+              });
+
+              if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                const n = new Notification(`⏰ DUE RIGHT NOW: ${task.title}`, {
+                  body: `Due Time: ${task.due_time} • Priority: ${task.priority}`,
+                  icon: '/favicon.ico',
+                  requireInteraction: true,
+                });
+                n.onclick = () => { window.focus(); setActiveTask(task); };
+              }
+            }
+          }
+        }
+
+      });
     }, 1000);
     return () => clearInterval(timer);
-  }, [tasks, playAggressiveAlarm]);
+  }, [tasks, playAlarmSound]);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -500,11 +504,12 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfDay(startOfWeek(new Date(), { weekStartsOn: 0 })), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  // Active Reminders List (Corner View)
+  // Active Corner Reminders (Shows in bottom right list)
   const activeReminders = useMemo(() => {
     if (!mounted) return [];
     const reminders: ActiveReminder[] = [];
-    const todayStr = format(currentTime, 'yyyy-MM-dd');
+    const now = currentTime;
+    const todayStr = format(now, 'yyyy-MM-dd');
 
     tasks.forEach((task) => {
       const compDates = task.completed_dates || [];
@@ -513,39 +518,45 @@ export default function Dashboard() {
       if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled')) return;
 
       if (task.start_time) {
-        const startDateTime = new Date(`${todayStr}T${task.start_time}:00`);
-        const startDiff = differenceInMinutes(startDateTime, currentTime);
-        if (startDiff <= 30 && startDiff >= -15) {
+        const [sh, sm] = task.start_time.split(':').map(Number);
+        const startTarget = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm, 0);
+        const diffSec = differenceInSeconds(startTarget, now);
+        const diffMin = Math.round(diffSec / 60);
+
+        if (diffMin <= 30 && diffMin >= -15) {
           if (!dismissedReminders.has(`${task.id}-start`)) {
             reminders.push({
               task,
-              diffMinutes: startDiff,
-              timeLabel: formatTimeDifference(startDiff, 'start'),
+              diffSeconds: diffSec,
+              timeLabel: diffMin <= 0 ? 'Starting right now!' : `Starts in ${diffMin}m`,
               isOverdue: false,
-              typeLabel: startDiff <= 3 ? 'start-pre' : 'start',
+              typeLabel: diffMin <= 3 && diffMin >= 0 ? 'start-pre' : 'start',
             });
           }
         }
       }
 
       if (task.due_time) {
-        const dueDateTime = new Date(`${todayStr}T${task.due_time}:00`);
-        const dueDiff = differenceInMinutes(dueDateTime, currentTime);
-        if (dueDiff <= 60 && dueDiff >= -120) {
+        const [dh, dm] = task.due_time.split(':').map(Number);
+        const dueTarget = new Date(now.getFullYear(), now.getMonth(), now.getDate(), dh, dm, 0);
+        const diffSec = differenceInSeconds(dueTarget, now);
+        const diffMin = Math.round(diffSec / 60);
+
+        if (diffMin <= 60 && diffMin >= -120) {
           if (!dismissedReminders.has(`${task.id}-due`)) {
             reminders.push({
               task,
-              diffMinutes: dueDiff,
-              timeLabel: formatTimeDifference(dueDiff, 'due'),
-              isOverdue: dueDiff < 0,
-              typeLabel: dueDiff <= 3 && dueDiff >= 0 ? 'due-pre' : 'due',
+              diffSeconds: diffSec,
+              timeLabel: diffMin < 0 ? `Overdue by ${Math.abs(diffMin)}m` : diffMin === 0 ? 'Due right now!' : `Due in ${diffMin}m`,
+              isOverdue: diffMin < 0,
+              typeLabel: diffMin <= 3 && diffMin >= 0 ? 'due-pre' : 'due',
             });
           }
         }
       }
     });
 
-    return reminders.sort((a, b) => a.diffMinutes - b.diffMinutes);
+    return reminders.sort((a, b) => a.diffSeconds - b.diffSeconds);
   }, [tasks, currentTime, dismissedReminders, mounted]);
 
   useEffect(() => {
@@ -801,18 +812,14 @@ export default function Dashboard() {
   }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate, showCompletedCancelled]);
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative" onClick={enableAudio}>
+    <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative">
       
-      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP */}
+      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP (EXACT 00:00 TIME ONLY) */}
       {urgentPopupAlert && (
         <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in zoom-in-95 duration-200">
           <div className={`bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border-2 transform transition-all ${
             urgentPopupAlert.alertType === 'due' 
               ? 'border-rose-500 ring-4 ring-rose-500/30' 
-              : urgentPopupAlert.alertType === 'due-pre'
-              ? 'border-amber-500 ring-4 ring-amber-500/30'
-              : urgentPopupAlert.alertType === 'start-pre'
-              ? 'border-sky-500 ring-4 ring-sky-500/30'
               : 'border-blue-600 ring-4 ring-blue-500/30'
           }`}>
             <div className="flex items-start justify-between">
@@ -820,30 +827,18 @@ export default function Dashboard() {
                 <div className={`p-3 rounded-2xl ${
                   urgentPopupAlert.alertType === 'due' 
                     ? 'bg-rose-600 text-white animate-bounce' 
-                    : urgentPopupAlert.alertType === 'due-pre'
-                    ? 'bg-amber-500 text-white animate-pulse'
-                    : urgentPopupAlert.alertType === 'start-pre'
-                    ? 'bg-sky-500 text-white animate-pulse'
                     : 'bg-blue-600 text-white animate-bounce'
                 }`}>
-                  {urgentPopupAlert.alertType === 'due' ? <Bell className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                  {urgentPopupAlert.alertType === 'due' ? <Bell className="w-6 h-6" /> : <PlayCircle className="w-6 h-6" />}
                 </div>
                 <div>
                   <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${
                     urgentPopupAlert.alertType === 'due' 
                       ? 'bg-rose-100 text-rose-800' 
-                      : urgentPopupAlert.alertType === 'due-pre'
-                      ? 'bg-amber-100 text-amber-800'
-                      : urgentPopupAlert.alertType === 'start-pre'
-                      ? 'bg-sky-100 text-sky-800'
                       : 'bg-blue-100 text-blue-800'
                   }`}>
                     {urgentPopupAlert.alertType === 'due' 
                       ? '⏰ Due Right Now!' 
-                      : urgentPopupAlert.alertType === 'due-pre'
-                      ? '⏳ Due in 3 Minutes!'
-                      : urgentPopupAlert.alertType === 'start-pre'
-                      ? '⚠️ Starting in 3 Minutes!'
                       : '🚀 Starting Right Now!'}
                   </span>
                   <h3 className="text-base font-bold text-slate-900 mt-1">{urgentPopupAlert.task.title}</h3>
@@ -853,7 +848,7 @@ export default function Dashboard() {
             </div>
 
             <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 my-4 space-y-2">
-              <p className="text-xs font-semibold text-slate-700">{urgentPopupAlert.customMessage}</p>
+              <p className="text-xs font-semibold text-slate-700">{urgentPopupAlert.message}</p>
               <div className="flex justify-between items-center text-xs pt-1">
                 <span className="text-slate-500 font-medium">Scheduled Time:</span>
                 <span className="font-bold text-slate-800 bg-white px-2.5 py-1 rounded-lg border shadow-2xs">{urgentPopupAlert.timeStr}</span>
@@ -961,11 +956,11 @@ export default function Dashboard() {
           <div className="flex items-center flex-wrap gap-2.5">
             {/* Audio Test Button */}
             <button
-              onClick={() => playAggressiveAlarm('critical')}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition"
-              title="Test aggressive alarm sound"
+              onClick={() => playAlarmSound('exact-alarm')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
+              title="Test aggressive alarm sound & ensure audio is unmuted"
             >
-              <Volume2 className="w-3.5 h-3.5 text-rose-600" /> Test Alarm
+              <Volume2 className="w-3.5 h-3.5 text-rose-600" /> Test Sound
             </button>
 
             <button
