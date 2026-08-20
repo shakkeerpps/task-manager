@@ -89,7 +89,7 @@ export default function Dashboard() {
   const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set());
   const soundPlayedRef = useRef<Set<string>>(new Set());
 
-  // 🎵 Audio Context Setup (Fix for sound not playing)
+  // Audio Context Setup
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const enableAudio = useCallback(() => {
@@ -192,10 +192,11 @@ export default function Dashboard() {
     }
   }, []);
 
+  // ⏱️ Second-by-Second Live Clock Update
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 10000);
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -370,9 +371,11 @@ export default function Dashboard() {
   const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date || t.due_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
   const overdueCount = useMemo(() => tasks.filter((t) => parseISO(t.due_date) < new Date() && t.status !== 'Completed' && t.status !== 'Resolved' && t.status !== 'Cancelled').length, [tasks]);
 
+  // 🔴 High Precision Live Current Time Indicator Line Position (Including Seconds)
   const currentDayIndex = differenceInDays(new Date(), timelineStart);
-  const currentHourPercent = (currentTime.getHours() * 60 + currentTime.getMinutes()) / 1440;
-  const liveIndicatorPosition = mounted && currentDayIndex >= 0 && currentDayIndex < 21 ? (currentDayIndex + currentHourPercent) * 60 : null;
+  const currentSecondsInDay = currentTime.getHours() * 3600 + currentTime.getMinutes() * 60 + currentTime.getSeconds();
+  const currentSecondsRatio = currentSecondsInDay / 86400; // 0 to 1 ratio of the day
+  const liveIndicatorPosition = mounted && currentDayIndex >= 0 && currentDayIndex < 21 ? (currentDayIndex + currentSecondsRatio) * 60 : null;
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
@@ -391,10 +394,9 @@ export default function Dashboard() {
   }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate]);
 
   return (
-    // 💡 Added onClick={enableAudio} here to unlock the audio context on first user interaction
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative" onClick={enableAudio}>
       
-      {/* 🚀 LIVE ACTIVE REMINDERS (1 Hour Before until Complete) */}
+      {/* 🚀 LIVE ACTIVE REMINDERS */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
         {activeReminders.map((reminder) => (
           <div
@@ -496,8 +498,12 @@ export default function Dashboard() {
       <div className="flex-1 overflow-x-auto overflow-y-auto">
         <div className="min-w-[1680px] relative">
           
+          {/* LIVE CURRENT TIME INDICATOR LINE (Calculates down to exact second) */}
           {liveIndicatorPosition !== null && (
-            <div style={{ left: `calc(400px + ${liveIndicatorPosition}px)` }} className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.6)]">
+            <div 
+              style={{ left: `calc(400px + ${liveIndicatorPosition}px)` }} 
+              className="absolute top-0 bottom-0 w-[2px] bg-rose-500 z-30 pointer-events-none shadow-[0_0_8px_rgba(244,63,94,0.7)] transition-all duration-300"
+            >
               <div className="sticky top-11 -ml-[4px] w-2.5 h-2.5 rounded-full bg-rose-600 ring-4 ring-rose-200 animate-pulse" />
             </div>
           )}
@@ -541,13 +547,27 @@ export default function Dashboard() {
                         const taskStart = parseISO(effectiveStart);
                         const taskEnd = parseISO(task.due_date);
                         
-                        const rawStartDiff = differenceInDays(taskStart, timelineStart);
-                        const rawDuration = differenceInDays(taskEnd, taskStart) + 1;
+                        const rawStartDay = differenceInDays(taskStart, timelineStart);
+                        const rawEndDay = differenceInDays(taskEnd, timelineStart);
 
-                        const clampedStart = Math.max(0, rawStartDiff);
-                        const visibleEnd = Math.min(21, rawStartDiff + rawDuration);
-                        const visibleDuration = Math.max(1, visibleEnd - clampedStart);
-                        const isVisible = rawStartDiff + rawDuration > 0 && rawStartDiff < 21;
+                        // ⏱️ Sub-Day Exact Offset Calculation using Start Time & Due Time
+                        let startFraction = 0;
+                        if (task.start_time) {
+                          const [sh, sm] = task.start_time.split(':').map(Number);
+                          startFraction = (sh * 60 + sm) / 1440;
+                        }
+
+                        let endFraction = 1;
+                        if (task.due_time) {
+                          const [dh, dm] = task.due_time.split(':').map(Number);
+                          endFraction = (dh * 60 + dm) / 1440;
+                        }
+
+                        const exactStartPos = (rawStartDay + startFraction) * 60;
+                        const exactEndPos = (rawEndDay + endFraction) * 60;
+                        const exactWidth = Math.max(18, exactEndPos - exactStartPos);
+
+                        const isVisible = exactEndPos > 0 && exactStartPos < (21 * 60);
 
                         return (
                           <div key={task.id} onClick={() => setActiveTask(task)} className="grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 cursor-pointer group transition relative">
@@ -575,16 +595,16 @@ export default function Dashboard() {
                             <div className="col-span-21 relative h-full flex items-center">
                               {task.frequency === 'once' && isVisible && (
                                 <div
-                                  style={{ left: `${clampedStart * 60 + 2}px`, width: `${visibleDuration * 60 - 6}px` }}
-                                  // 💡 CHANGED: Removed 'truncate' from the main wrapper, added 'overflow-hidden'
-                                  className={`absolute h-7 rounded-md px-2.5 flex items-center text-xs font-semibold shadow-2xs overflow-hidden transition ${
+                                  style={{ 
+                                    left: `${exactStartPos + 1}px`, 
+                                    width: `${exactWidth - 2}px` 
+                                  }}
+                                  className={`absolute h-7 rounded-md px-2 flex items-center text-xs font-semibold shadow-2xs overflow-hidden transition ${
                                     task.status === 'Completed' || task.status === 'Resolved' ? 'bg-emerald-50 border border-emerald-300 text-emerald-800' : task.status === 'Blocked' ? 'bg-rose-50 border border-rose-300 text-rose-800' : 'bg-indigo-50 border border-indigo-300 text-indigo-800 hover:ring-2 hover:ring-indigo-400'
                                   }`}
+                                  title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
                                 >
-                                  {/* Title truncates gracefully */}
                                   <span className="truncate">{task.title}</span>
-                                  
-                                  {/* TIME BUBBLE: Added whitespace-nowrap and shrink-0 to prevent compression */}
                                   {(task.start_time || task.due_time) && (
                                     <span className="ml-1.5 px-1.5 py-0.5 bg-indigo-200/80 text-[10px] font-bold rounded-full text-indigo-950 whitespace-nowrap shrink-0">
                                       {task.start_time ? format(parseISO(`2023-01-01T${task.start_time}`), 'hh:mm a') : ''}
@@ -916,4 +936,4 @@ export default function Dashboard() {
 
     </main>
   );
-} 
+}
