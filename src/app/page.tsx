@@ -10,7 +10,7 @@ import {
   Bold, Italic, Underline, Strikethrough, List, ListOrdered, Heading1, Heading2, 
   AlignLeft, AlignCenter, AlignRight, AlignJustify, Quote, Code, RemoveFormatting,
   Palette, Highlighter, Table as TableIcon, Undo, Redo, Type, CheckSquare, Ban,
-  Check, RefreshCw, PlayCircle, ExternalLink, Volume2, AlertTriangle
+  Check, RefreshCw, PlayCircle, ExternalLink, Volume2, Copy
 } from 'lucide-react';
 
 interface Department {
@@ -214,8 +214,9 @@ export default function Dashboard() {
   // Popups
   const [selectedInstance, setSelectedInstance] = useState<SelectedInstance | null>(null);
   const [urgentPopupAlert, setUrgentPopupAlert] = useState<UrgentPopupAlert | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
-  // 🔊 UNLOCK & PLAY AGGRESSIVE MULTI-FREQUENCY LOUD ALARM
+  // 🔊 UNLOCK & PLAY AUDIO
   const unlockAudio = useCallback(() => {
     try {
       if (!audioContextRef.current) {
@@ -233,7 +234,6 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    // Globally unlock audio on any user interaction with the window
     const handleUserGesture = () => unlockAudio();
     window.addEventListener('click', handleUserGesture);
     window.addEventListener('keydown', handleUserGesture);
@@ -253,7 +253,6 @@ export default function Dashboard() {
       if (ctx.state === 'suspended') ctx.resume();
 
       if (mode === 'exact-alarm') {
-        // High-volume piercing sawtooth alarm (alternating siren)
         const sirenPitches = [900, 1400, 900, 1400, 1800, 1400];
         sirenPitches.forEach((freq, idx) => {
           const osc = ctx.createOscillator();
@@ -273,7 +272,6 @@ export default function Dashboard() {
           osc.stop(ctx.currentTime + idx * 0.15 + 0.15);
         });
       } else {
-        // 3-Minute Warning Beep (2 double beeps)
         const warningPitches = [700, 1000];
         warningPitches.forEach((freq, idx) => {
           const osc = ctx.createOscillator();
@@ -308,15 +306,13 @@ export default function Dashboard() {
     }
   }, []);
 
-  // 1-Second Master Realtime Listener: 3-Min Warning & Exact Start/Due Alarms
+  // 1-Second Master Realtime Listener
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
       setCurrentTime(now);
 
       const todayStr = format(now, 'yyyy-MM-dd');
-      const currentH = now.getHours();
-      const currentM = now.getMinutes();
 
       tasks.forEach((task) => {
         const compDates = task.completed_dates || [];
@@ -332,15 +328,12 @@ export default function Dashboard() {
 
         if (!isApplicableToday) return;
 
-        // -------------------------------------------------------------
-        // 🚀 1. START TIME (3 MINS PRE-ALERT & EXACT 00:00 START)
-        // -------------------------------------------------------------
+        // 1. START TIME (3 MINS PRE-ALERT & EXACT START)
         if (task.start_time) {
           const [sh, sm] = task.start_time.split(':').map(Number);
           const startTargetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm, 0);
           const diffSec = differenceInSeconds(startTargetDate, now);
 
-          // A. Exactly 3 Minutes Warning (between 175 and 180 seconds)
           if (diffSec <= 180 && diffSec >= 170) {
             const notifKey = `start-pre3-${task.id}-${todayStr}-${task.start_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
@@ -358,14 +351,12 @@ export default function Dashboard() {
             }
           }
 
-          // B. EXACT START TIME (0 seconds, within 0-5s window)
           if (diffSec <= 0 && diffSec >= -5) {
             const notifKey = `start-exact-${task.id}-${todayStr}-${task.start_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
               notifiedEventsRef.current.add(notifKey);
               playAlarmSound('exact-alarm');
 
-              // Open Center Urgent Modal Popup ONLY on exact time
               setUrgentPopupAlert({
                 task,
                 alertType: 'start',
@@ -385,15 +376,12 @@ export default function Dashboard() {
           }
         }
 
-        // -------------------------------------------------------------
-        // ⏰ 2. DUE TIME (3 MINS PRE-ALERT & EXACT 00:00 DUE DEADLINE)
-        // -------------------------------------------------------------
+        // 2. DUE TIME (3 MINS PRE-ALERT & EXACT DUE)
         if (task.due_time) {
           const [dh, dm] = task.due_time.split(':').map(Number);
           const dueTargetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), dh, dm, 0);
           const diffSec = differenceInSeconds(dueTargetDate, now);
 
-          // A. Exactly 3 Minutes Before Due Time
           if (diffSec <= 180 && diffSec >= 170) {
             const notifKey = `due-pre3-${task.id}-${todayStr}-${task.due_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
@@ -411,14 +399,12 @@ export default function Dashboard() {
             }
           }
 
-          // B. EXACT DUE TIME (0 seconds)
           if (diffSec <= 0 && diffSec >= -5) {
             const notifKey = `due-exact-${task.id}-${todayStr}-${task.due_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
               notifiedEventsRef.current.add(notifKey);
               playAlarmSound('exact-alarm');
 
-              // Open Center Urgent Modal Popup ONLY on exact time
               setUrgentPopupAlert({
                 task,
                 alertType: 'due',
@@ -442,6 +428,13 @@ export default function Dashboard() {
     }, 1000);
     return () => clearInterval(timer);
   }, [tasks, playAlarmSound]);
+
+  // Copy Link Helper
+  const handleCopyLink = (link: string) => {
+    navigator.clipboard.writeText(link);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2500);
+  };
 
   // Filters
   const [search, setSearch] = useState('');
@@ -504,7 +497,7 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfDay(startOfWeek(new Date(), { weekStartsOn: 0 })), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  // Active Corner Reminders (Shows in bottom right list)
+  // Active Corner Reminders
   const activeReminders = useMemo(() => {
     if (!mounted) return [];
     const reminders: ActiveReminder[] = [];
@@ -814,7 +807,7 @@ export default function Dashboard() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative">
       
-      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP (EXACT 00:00 TIME ONLY) */}
+      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP (WITH COPY LINK & JOIN NOW) */}
       {urgentPopupAlert && (
         <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in zoom-in-95 duration-200">
           <div className={`bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border-2 transform transition-all ${
@@ -847,7 +840,7 @@ export default function Dashboard() {
               <button onClick={() => setUrgentPopupAlert(null)} className="text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-100"><X className="w-5 h-5" /></button>
             </div>
 
-            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 my-4 space-y-2">
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 my-4 space-y-2.5">
               <p className="text-xs font-semibold text-slate-700">{urgentPopupAlert.message}</p>
               <div className="flex justify-between items-center text-xs pt-1">
                 <span className="text-slate-500 font-medium">Scheduled Time:</span>
@@ -857,16 +850,31 @@ export default function Dashboard() {
                 <span className="text-slate-500 font-medium">Priority:</span>
                 <span className={`font-bold px-2 py-0.5 rounded ${PRIORITY_STYLES[urgentPopupAlert.task.priority]}`}>{urgentPopupAlert.task.priority}</span>
               </div>
+
+              {/* 📹 GOOGLE MEET ACTION BUTTONS: COPY LINK & JOIN NOW */}
               {urgentPopupAlert.task.meet_link && (
-                <div className="pt-2 border-t border-slate-200/60">
-                  <a
-                    href={urgentPopupAlert.task.meet_link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 w-full py-2.5 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold shadow-md shadow-violet-500/20 transition"
-                  >
-                    <Video className="w-4 h-4" /> Join Google Meet Now <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                <div className="pt-2.5 border-t border-slate-200/80 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleCopyLink(urgentPopupAlert.task.meet_link!)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold border transition ${
+                        linkCopied ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-2xs'
+                      }`}
+                      title="Copy meeting link to clipboard"
+                    >
+                      {linkCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
+                      {linkCopied ? 'Link Copied!' : 'Copy Link'}
+                    </button>
+
+                    <a
+                      href={urgentPopupAlert.task.meet_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold shadow-xs shadow-violet-500/25 transition"
+                    >
+                      <Video className="w-3.5 h-3.5" /> Join Now <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
                 </div>
               )}
             </div>
