@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { format, addDays, startOfWeek, differenceInDays, isToday, parseISO, getDay, getDate, differenceInMinutes } from 'date-fns';
-import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell } from 'lucide-react';
+import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell, CheckCircle2 } from 'lucide-react';
 
 interface Department {
   id: string;
@@ -37,13 +37,11 @@ interface HistoryItem {
   changed_at: string;
 }
 
-interface ToastNotification {
-  id: string;
+interface ActiveReminder {
   task: Task;
-  title: string;
-  message: string;
-  type: 'due_now' | '30_min' | '1_hour';
-  timeStr: string;
+  diffMinutes: number;
+  timeLabel: string;
+  isOverdue: boolean;
 }
 
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
@@ -65,16 +63,31 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// 🎵 Premium Crystal Polyphonic Notification Chime Sound Synthesizer
-const playPremiumChime = (type: 'due_now' | '30_min' | '1_hour') => {
+// Helper to format remaining vs overdue time
+const formatTimeDifference = (diffMinutes: number) => {
+  if (diffMinutes >= 0) {
+    if (diffMinutes === 0) return 'Due right now!';
+    if (diffMinutes < 60) return `${diffMinutes} min${diffMinutes === 1 ? '' : 's'} remaining`;
+    const hrs = Math.floor(diffMinutes / 60);
+    const mins = diffMinutes % 60;
+    return `${hrs}h ${mins}m remaining`;
+  } else {
+    const overdueMins = Math.abs(diffMinutes);
+    if (overdueMins < 60) return `Overdue by ${overdueMins} min${overdueMins === 1 ? '' : 's'}`;
+    const hrs = Math.floor(overdueMins / 60);
+    const mins = overdueMins % 60;
+    return `Overdue by ${hrs}h ${mins}m`;
+  }
+};
+
+// 🎵 Polyphonic Notification Chime
+const playPremiumChime = (isOverdue: boolean) => {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
 
-    const notes = type === 'due_now' 
-      ? [523.25, 659.25, 1046.50] // C5 -> E5 -> C6 high chime
-      : [587.33, 880.00];         // D5 -> A5 smooth bell tone
+    const notes = isOverdue ? [523.25, 659.25, 1046.50] : [587.33, 880.00];
 
     notes.forEach((freq, idx) => {
       const osc = ctx.createOscillator();
@@ -84,7 +97,7 @@ const playPremiumChime = (type: 'due_now' | '30_min' | '1_hour') => {
       osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.12);
 
       gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.12);
-      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + idx * 0.12 + 0.02);
+      gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + idx * 0.12 + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + idx * 0.12 + 0.6);
 
       osc.connect(gain);
@@ -94,7 +107,7 @@ const playPremiumChime = (type: 'due_now' | '30_min' | '1_hour') => {
       osc.stop(ctx.currentTime + idx * 0.12 + 0.65);
     });
   } catch (e) {
-    console.error('Audio chime error:', e);
+    // Audio restriction fallback
   }
 };
 
@@ -104,9 +117,9 @@ export default function Dashboard() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   
-  // Messenger-style floating notifications
-  const [toasts, setToasts] = useState<ToastNotification[]>([]);
-  const alertedTasksRef = useRef<Set<string>>(new Set());
+  // Track dismissed reminder IDs in session
+  const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set());
+  const soundPlayedRef = useRef<Set<string>>(new Set());
 
   // Filters
   const [search, setSearch] = useState('');
@@ -157,7 +170,7 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfWeek(new Date(), { weekStartsOn: 0 }), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  // Request Native Notification Permission on mount
+  // Request Native Notification Permission
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
@@ -166,92 +179,51 @@ export default function Dashboard() {
     }
   }, []);
 
-  // Real-time Clock & Smart Task Reminder Interval (Checks every 20 seconds)
+  // Real-time Clock updating every 10 seconds
   useEffect(() => {
-    const checkReminders = () => {
-      const now = new Date();
-      setCurrentTime(now);
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
-      tasks.forEach((task) => {
-        if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') return;
-        if (!task.due_date || !task.due_time) return;
+  // Compute Active Reminders (from 1 hour before due until completed)
+  const activeReminders = useMemo(() => {
+    const reminders: ActiveReminder[] = [];
 
-        const taskDueDateTime = new Date(`${task.due_date}T${task.due_time}:00`);
-        const diffMinutes = differenceInMinutes(taskDueDateTime, now);
+    tasks.forEach((task) => {
+      if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') {
+        return;
+      }
+      if (!task.due_date) return;
 
-        // 1 Hour Alert (50 - 60 mins)
-        if (diffMinutes > 50 && diffMinutes <= 60) {
-          const alertKey = `${task.id}-1hour`;
-          if (!alertedTasksRef.current.has(alertKey)) {
-            alertedTasksRef.current.add(alertKey);
-            triggerNotification(task, '1_hour', `⏰ 1 Hour Left: Due at ${task.due_time}`);
+      const dueDateTimeStr = task.due_time ? `${task.due_date}T${task.due_time}:00` : `${task.due_date}T23:59:59`;
+      const taskDueDateTime = new Date(dueDateTimeStr);
+      const diffMinutes = differenceInMinutes(taskDueDateTime, currentTime);
+
+      // Condition: 1 hour before due (<= 60 mins) OR already Overdue (diffMinutes < 0)
+      if (diffMinutes <= 60) {
+        if (!dismissedReminders.has(task.id)) {
+          reminders.push({
+            task,
+            diffMinutes,
+            timeLabel: formatTimeDifference(diffMinutes),
+            isOverdue: diffMinutes < 0,
+          });
+
+          // Play sound when entering 1 hour window or due now for the first time
+          const soundKey = `${task.id}-${diffMinutes <= 0 ? 'due' : '1hr'}`;
+          if (!soundPlayedRef.current.has(soundKey)) {
+            soundPlayedRef.current.add(soundKey);
+            playPremiumChime(diffMinutes < 0);
           }
         }
+      }
+    });
 
-        // 30 Mins Alert (20 - 30 mins)
-        if (diffMinutes > 20 && diffMinutes <= 30) {
-          const alertKey = `${task.id}-30min`;
-          if (!alertedTasksRef.current.has(alertKey)) {
-            alertedTasksRef.current.add(alertKey);
-            triggerNotification(task, '30_min', `⚠️ 30 Minutes Left: Due at ${task.due_time}`);
-          }
-        }
-
-        // Due Now Alert (0 - 2 mins)
-        if (diffMinutes >= -1 && diffMinutes <= 2) {
-          const alertKey = `${task.id}-duenow`;
-          if (!alertedTasksRef.current.has(alertKey)) {
-            alertedTasksRef.current.add(alertKey);
-            triggerNotification(task, 'due_now', `🚨 Task Due Now (${task.due_time})!`);
-          }
-        }
-      });
-    };
-
-    const interval = setInterval(checkReminders, 20000);
-    checkReminders();
-
-    return () => clearInterval(interval);
-  }, [tasks]);
-
-  const triggerNotification = (task: Task, type: 'due_now' | '30_min' | '1_hour', message: string) => {
-    // 1. Play crystal chime sound
-    playPremiumChime(type);
-
-    // 2. Add Floating In-App Toast
-    const newToast: ToastNotification = {
-      id: `${task.id}-${Date.now()}`,
-      task,
-      title: task.title,
-      message,
-      type,
-      timeStr: format(new Date(), 'hh:mm a'),
-    };
-    setToasts((prev) => [newToast, ...prev.slice(0, 4)]);
-
-    // 3. System Push Notification
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      const notif = new Notification(`Task Reminder: ${task.title}`, {
-        body: `${message}\nClick to view details.`,
-        icon: '/favicon.ico',
-      });
-      notif.onclick = () => {
-        window.focus();
-        setActiveTask(task);
-      };
-    }
-  };
-
-  const removeToast = (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  // When clicking on a Toast notification, open that task!
-  const handleToastClick = (toast: ToastNotification) => {
-    setActiveTask(toast.task);
-    removeToast(toast.id);
-  };
+    // Sort: Overdue first, then soonest due
+    return reminders.sort((a, b) => a.diffMinutes - b.diffMinutes);
+  }, [tasks, currentTime, dismissedReminders]);
 
   useEffect(() => {
     loadAllData();
@@ -318,6 +290,17 @@ export default function Dashboard() {
         start_time: '',
         due_time: '',
       }));
+      fetchTasks();
+      fetchHistory();
+    }
+  };
+
+  // Quick mark complete directly from notification
+  const handleQuickComplete = async (taskId: string, title: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const { error } = await supabase.from('tasks').update({ status: 'Completed' }).eq('id', taskId);
+    if (!error) {
+      await supabase.from('task_history').insert([{ task_id: taskId, action: `Completed task: "${title}"` }]);
       fetchTasks();
       fetchHistory();
     }
@@ -426,49 +409,68 @@ export default function Dashboard() {
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative">
       
       {/* ========================================================================= */}
-      {/* 🚀 MESSENGER-STYLE FLOATING SIDE NOTIFICATIONS (CLICKABLE TO OPEN TASK) */}
+      {/* 🚀 LIVE ACTIVE REMINDERS (1 Hour Before until Complete - Floating Side List) */}
       {/* ========================================================================= */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
-        {toasts.map((toast) => (
+        {activeReminders.map((reminder) => (
           <div
-            key={toast.id}
-            onClick={() => handleToastClick(toast)}
+            key={reminder.task.id}
+            onClick={() => setActiveTask(reminder.task)}
             className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-2xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 hover:shadow-indigo-500/20 active:scale-98 animate-in slide-in-from-right-10 group ${
-              toast.type === 'due_now'
-                ? 'bg-rose-50/95 border-rose-300 text-rose-900'
-                : toast.type === '30_min'
-                ? 'bg-amber-50/95 border-amber-300 text-amber-900'
-                : 'bg-blue-50/95 border-blue-300 text-blue-900'
+              reminder.isOverdue
+                ? 'bg-rose-50/95 border-rose-300 text-rose-950'
+                : 'bg-amber-50/95 border-amber-300 text-amber-950'
             }`}
           >
-            {/* Glowing Avatar/Icon */}
+            {/* Glowing Status Icon */}
             <div
               className={`p-2.5 rounded-full shrink-0 shadow-sm transition-transform group-hover:scale-110 ${
-                toast.type === 'due_now'
+                reminder.isOverdue
                   ? 'bg-rose-600 text-white animate-bounce'
-                  : toast.type === '30_min'
-                  ? 'bg-amber-500 text-white animate-pulse'
-                  : 'bg-blue-600 text-white'
+                  : 'bg-amber-500 text-white animate-pulse'
               }`}
             >
               <Bell className="w-4 h-4" />
             </div>
 
-            {/* Notification Body */}
+            {/* Notification Text */}
             <div className="flex-1 overflow-hidden">
               <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">{toast.title}</h4>
-                <span className="text-[10px] opacity-70 shrink-0">{toast.timeStr}</span>
+                <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">
+                  {reminder.task.title}
+                </h4>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                  reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-amber-200 text-amber-800'
+                }`}>
+                  {reminder.task.due_time || 'Today'}
+                </span>
               </div>
-              <p className="text-xs font-medium mt-0.5 leading-snug">{toast.message}</p>
-              <span className="text-[10px] text-blue-600 font-bold mt-1 inline-block opacity-0 group-hover:opacity-100 transition">
-                👆 Click to open details
-              </span>
+
+              {/* Remaining / Overdue Time Label */}
+              <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>
+                {reminder.isOverdue ? '🚨 ' : '⏳ '}{reminder.timeLabel}
+              </p>
+
+              {/* Quick Actions */}
+              <div className="flex items-center justify-between mt-2 pt-1 border-t border-black/5">
+                <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">
+                  👆 Click to edit
+                </span>
+                <button
+                  onClick={(e) => handleQuickComplete(reminder.task.id, reminder.task.title, e)}
+                  className="flex items-center gap-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-md shadow-xs transition"
+                >
+                  <CheckCircle2 className="w-3 h-3" /> Mark Done
+                </button>
+              </div>
             </div>
 
-            {/* Close Button */}
+            {/* Dismiss temporary */}
             <button
-              onClick={(e) => removeToast(toast.id, e)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setDismissedReminders((prev) => new Set([...prev, reminder.task.id]));
+              }}
               className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-black/10 shrink-0 transition"
               title="Dismiss"
             >
@@ -487,7 +489,7 @@ export default function Dashboard() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-slate-900 leading-tight">Project Timeline Hub</h1>
-              <p className="text-xs text-slate-500">Live Time: {format(currentTime, 'hh:mm a')} • {filteredTasks.length} Showing</p>
+              <p className="text-xs text-slate-500">Live Time: {format(currentTime, 'hh:mm:ss a')} • {filteredTasks.length} Showing</p>
             </div>
           </div>
 
@@ -986,6 +988,7 @@ export default function Dashboard() {
                 </select>
               </div>
 
+              {/* Dynamic Frequency Fields */}
               {formData.frequency === 'weekly' && (
                 <div className="bg-slate-50 p-2 rounded-lg border">
                   <label className="text-[11px] font-semibold text-slate-600">Select Day of the Week</label>
