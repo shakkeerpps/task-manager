@@ -9,7 +9,8 @@ import {
   Sparkles, Layers, ShieldCheck, Tag,
   Bold, Italic, Underline, Strikethrough, List, ListOrdered, Heading1, Heading2, 
   AlignLeft, AlignCenter, AlignRight, AlignJustify, Quote, Code, RemoveFormatting,
-  Palette, Highlighter, Table as TableIcon, Undo, Redo, Type
+  Palette, Highlighter, Table as TableIcon, Undo, Redo, Type, CheckSquare, Ban,
+  Check, RefreshCw
 } from 'lucide-react';
 
 interface Department {
@@ -40,6 +41,8 @@ interface Task {
   frequency: TaskFrequency;
   recurring_day?: string;
   recurring_date?: number;
+  completed_dates?: string[];
+  cancelled_dates?: string[];
 }
 
 interface HistoryItem {
@@ -53,6 +56,14 @@ interface ActiveReminder {
   diffMinutes: number;
   timeLabel: string;
   isOverdue: boolean;
+  typeLabel: 'start' | 'due';
+}
+
+interface SelectedInstance {
+  task: Task;
+  dateStr: string;
+  isCompleted: boolean;
+  isCancelled: boolean;
 }
 
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
@@ -83,10 +94,10 @@ const formatTimeDifference = (diffMinutes: number) => {
     return `${hrs}h ${mins}m remaining`;
   } else {
     const overdueMins = Math.abs(diffMinutes);
-    if (overdueMins < 60) return `Overdue by ${overdueMins} min`;
+    if (overdueMins < 60) return `Passed by ${overdueMins} min`;
     const hrs = Math.floor(overdueMins / 60);
     const mins = overdueMins % 60;
-    return `Overdue by ${hrs}h ${mins}m`;
+    return `Passed by ${hrs}h ${mins}m`;
   }
 };
 
@@ -135,8 +146,6 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
 
   return (
     <div className="border border-slate-300 rounded-xl overflow-hidden bg-white shadow-xs focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition">
-      
-      {/* Comprehensive Word-Like Toolbar */}
       <div className="flex flex-wrap items-center gap-1 p-2 bg-slate-100/80 border-b border-slate-200 select-none">
         <button type="button" onClick={() => exec('undo')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Undo"><Undo className="w-3.5 h-3.5" /></button>
         <button type="button" onClick={() => exec('redo')} className="p-1.5 hover:bg-slate-200 rounded text-slate-700 transition" title="Redo"><Redo className="w-3.5 h-3.5" /></button>
@@ -188,7 +197,6 @@ function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val
         <button type="button" onClick={() => exec('removeFormat')} className="p-1.5 hover:bg-slate-200 rounded text-rose-600 transition" title="Clear Formatting"><RemoveFormatting className="w-3.5 h-3.5" /></button>
       </div>
 
-      {/* Editable Viewport (Fixed: removed invalid placeholder prop) */}
       <div
         ref={editorRef}
         contentEditable
@@ -210,7 +218,11 @@ export default function Dashboard() {
   
   const [dismissedReminders, setDismissedReminders] = useState<Set<string>>(new Set());
   const soundPlayedRef = useRef<Set<string>>(new Set());
+  const notifiedEventsRef = useRef<Set<string>>(new Set());
   const audioContextRef = useRef<AudioContext | null>(null);
+
+  // Instance Status Popover State
+  const [selectedInstance, setSelectedInstance] = useState<SelectedInstance | null>(null);
 
   const enableAudio = useCallback(() => {
     if (!audioContextRef.current) {
@@ -224,13 +236,13 @@ export default function Dashboard() {
     }
   }, []);
 
-  const playPremiumChime = useCallback((isOverdue: boolean) => {
+  const playPremiumChime = useCallback((isAlert: boolean) => {
     try {
       const ctx = audioContextRef.current;
       if (!ctx) return;
       if (ctx.state === 'suspended') ctx.resume();
 
-      const notes = isOverdue ? [523.25, 659.25, 1046.50] : [587.33, 880.00];
+      const notes = isAlert ? [523.25, 659.25, 1046.50] : [587.33, 880.00];
 
       notes.forEach((freq, idx) => {
         const osc = ctx.createOscillator();
@@ -253,6 +265,83 @@ export default function Dashboard() {
       console.error("Audio error:", e);
     }
   }, []);
+
+  // Request Notification Permission
+  useEffect(() => {
+    setMounted(true);
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+    }
+  }, []);
+
+  // 1-Second Interval Master Clock & Notifications
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = new Date();
+      setCurrentTime(now);
+
+      const todayStr = format(now, 'yyyy-MM-dd');
+      const currentH = now.getHours();
+      const currentM = now.getMinutes();
+      const currentS = now.getSeconds();
+
+      if (currentS === 0) {
+        tasks.forEach((task) => {
+          const compDates = task.completed_dates || [];
+          const cancDates = task.cancelled_dates || [];
+          if (compDates.includes(todayStr) || cancDates.includes(todayStr)) return;
+          if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Cancelled' || task.status === 'Resolved')) return;
+
+          let isApplicableToday = false;
+          if (task.frequency === 'once' && (task.start_date === todayStr || task.due_date === todayStr)) isApplicableToday = true;
+          else if (task.frequency === 'daily') isApplicableToday = true;
+          else if (task.frequency === 'weekly' && task.recurring_day === DAYS_OF_WEEK[getDay(now)]) isApplicableToday = true;
+          else if (task.frequency === 'monthly' && Number(task.recurring_date) === getDate(now)) isApplicableToday = true;
+
+          if (!isApplicableToday) return;
+
+          // Start notification
+          if (task.start_time) {
+            const [sh, sm] = task.start_time.split(':').map(Number);
+            if (currentH === sh && currentM === sm) {
+              const notifKey = `start-${task.id}-${todayStr}-${task.start_time}`;
+              if (!notifiedEventsRef.current.has(notifKey)) {
+                notifiedEventsRef.current.add(notifKey);
+                playPremiumChime(false);
+                if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                  new Notification(`🚀 Starting Now: ${task.title}`, {
+                    body: `Time: ${task.start_time}`,
+                    icon: '/favicon.ico',
+                  });
+                }
+              }
+            }
+          }
+
+          // Due notification
+          if (task.due_time) {
+            const [dh, dm] = task.due_time.split(':').map(Number);
+            if (currentH === dh && currentM === dm) {
+              const notifKey = `due-${task.id}-${todayStr}-${task.due_time}`;
+              if (!notifiedEventsRef.current.has(notifKey)) {
+                notifiedEventsRef.current.add(notifKey);
+                playPremiumChime(true);
+                if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+                  new Notification(`⏰ Due Right Now: ${task.title}`, {
+                    body: `Due Time: ${task.due_time}`,
+                    icon: '/favicon.ico',
+                  });
+                }
+              }
+            }
+          }
+        });
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [tasks, playPremiumChime]);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -315,54 +404,39 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfDay(startOfWeek(new Date(), { weekStartsOn: 0 })), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  useEffect(() => {
-    setMounted(true);
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-        Notification.requestPermission();
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
+  // Active Reminders
   const activeReminders = useMemo(() => {
     if (!mounted) return [];
     const reminders: ActiveReminder[] = [];
+    const todayStr = format(currentTime, 'yyyy-MM-dd');
 
     tasks.forEach((task) => {
-      if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') return;
+      const compDates = task.completed_dates || [];
+      const cancDates = task.cancelled_dates || [];
+      if (compDates.includes(todayStr) || cancDates.includes(todayStr)) return;
+      if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled')) return;
+
       if (!task.due_date) return;
 
-      const dueDateTimeStr = task.due_time ? `${task.due_date}T${task.due_time}:00` : `${task.due_date}T23:59:59`;
+      const dueDateTimeStr = task.due_time ? `${todayStr}T${task.due_time}:00` : `${todayStr}T23:59:59`;
       const taskDueDateTime = new Date(dueDateTimeStr);
       const diffMinutes = differenceInMinutes(taskDueDateTime, currentTime);
 
-      if (diffMinutes <= 60) {
+      if (diffMinutes <= 60 && diffMinutes >= -120) {
         if (!dismissedReminders.has(task.id)) {
           reminders.push({
             task,
             diffMinutes,
             timeLabel: formatTimeDifference(diffMinutes),
             isOverdue: diffMinutes < 0,
+            typeLabel: 'due',
           });
-
-          const soundKey = `${task.id}-${diffMinutes <= 0 ? 'due' : '1hr'}`;
-          if (!soundPlayedRef.current.has(soundKey)) {
-            soundPlayedRef.current.add(soundKey);
-            playPremiumChime(diffMinutes < 0);
-          }
         }
       }
     });
 
     return reminders.sort((a, b) => a.diffMinutes - b.diffMinutes);
-  }, [tasks, currentTime, dismissedReminders, mounted, playPremiumChime]);
+  }, [tasks, currentTime, dismissedReminders, mounted]);
 
   useEffect(() => {
     loadAllData();
@@ -395,6 +469,8 @@ export default function Dashboard() {
           ...t,
           type: t.type || 'task',
           participants: t.participants || ['vertexsolutionsptb@gmail.com'],
+          completed_dates: t.completed_dates || [],
+          cancelled_dates: t.cancelled_dates || [],
         }))
       );
     }
@@ -438,6 +514,8 @@ export default function Dashboard() {
       due_time: formData.due_time || null,
       description: formData.description,
       owner_name: 'Me',
+      completed_dates: [],
+      cancelled_dates: [],
     };
 
     const { data, error } = await supabase.from('tasks').insert([payload]).select();
@@ -463,11 +541,31 @@ export default function Dashboard() {
     }
   };
 
-  const handleQuickComplete = async (taskId: string, title: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const { error } = await supabase.from('tasks').update({ status: 'Completed' }).eq('id', taskId);
+  // 🎯 INDIVIDUAL DAY INSTANCE STATUS MANAGER
+  const handleSetInstanceStatus = async (status: 'Active' | 'Completed' | 'Cancelled') => {
+    if (!selectedInstance) return;
+    const { task, dateStr } = selectedInstance;
+
+    let comp = (task.completed_dates || []).filter((d) => d !== dateStr);
+    let canc = (task.cancelled_dates || []).filter((d) => d !== dateStr);
+
+    if (status === 'Completed') {
+      comp.push(dateStr);
+    } else if (status === 'Cancelled') {
+      canc.push(dateStr);
+    }
+
+    const { error } = await supabase.from('tasks').update({
+      completed_dates: comp,
+      cancelled_dates: canc,
+    }).eq('id', task.id);
+
     if (!error) {
-      await supabase.from('task_history').insert([{ task_id: taskId, action: `Completed: "${title}"` }]);
+      await supabase.from('task_history').insert([{
+        task_id: task.id,
+        action: `Marked "${task.title}" on ${dateStr} as ${status}`,
+      }]);
+      setSelectedInstance(null);
       fetchTasks();
       fetchHistory();
     }
@@ -576,7 +674,7 @@ export default function Dashboard() {
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
-      if (!showCompletedCancelled && (task.status === 'Completed' || task.status === 'Cancelled' || task.status === 'Resolved')) {
+      if (!showCompletedCancelled && task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Cancelled' || task.status === 'Resolved')) {
         return false;
       }
       if (search && !task.title.toLowerCase().includes(search.toLowerCase()) && !(task.description || '').toLowerCase().includes(search.toLowerCase())) return false;
@@ -620,9 +718,6 @@ export default function Dashboard() {
               <p className={`text-xs font-bold mt-1 ${reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>{reminder.isOverdue ? '🚨 OVERDUE: ' : '⏳ '}{reminder.timeLabel}</p>
               <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-slate-100">
                 <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">Click to edit</span>
-                <button onClick={(e) => handleQuickComplete(reminder.task.id, reminder.task.title, e)} className="flex items-center gap-1 text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg shadow-xs transition">
-                  <CheckCircle2 className="w-3 h-3" /> Mark Done
-                </button>
               </div>
             </div>
 
@@ -646,7 +741,7 @@ export default function Dashboard() {
               </div>
               <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                {mounted ? `Live: ${format(currentTime, 'hh:mm:ss a')} • ` : ''}{filteredTasks.length} Showing
+                {mounted ? `Live: ${format(currentTime, 'hh:mm:ss a')} • ` : ''}{filteredTasks.length} Active Tasks
               </p>
             </div>
           </div>
@@ -659,7 +754,7 @@ export default function Dashboard() {
               }`}
             >
               {showCompletedCancelled ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              {showCompletedCancelled ? 'Hide Done' : 'Show Done'}
+              {showCompletedCancelled ? 'Hide Done/Cancelled' : 'Show Done/Cancelled'}
             </button>
 
             <button onClick={() => setActiveQuickFilter((prev) => (prev === 'today' ? null : 'today'))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${activeQuickFilter === 'today' ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100/50'}`}>
@@ -785,8 +880,10 @@ export default function Dashboard() {
                       const plainDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '') : '';
 
                       return (
-                        <div key={task.id} onClick={() => setActiveTask(task)} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 cursor-pointer group transition relative ${isTaskOverdue ? 'bg-rose-50/40' : ''}`}>
-                          <div className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${isTaskOverdue ? 'bg-rose-50/40' : ''}`}>
+                          
+                          {/* Left Details Column */}
+                          <div onClick={() => setActiveTask(task)} className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] cursor-pointer">
                             <div className="flex flex-col truncate pr-2">
                               <div className="flex items-center gap-1.5">
                                 {task.type === 'event' && <Video className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
@@ -817,13 +914,16 @@ export default function Dashboard() {
                             </div>
                           </div>
 
+                          {/* Right Timeline Bar View */}
                           <div className="col-span-21 relative h-full flex items-center">
+                            
                             {/* 1. ONCE TASKS TIMELINE BAR */}
                             {task.frequency === 'once' && isVisible && (
                               <>
                                 <div
+                                  onClick={() => setActiveTask(task)}
                                   style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
-                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 ${
+                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${
                                     isTaskOverdue 
                                       ? 'bg-rose-600 text-white ring-2 ring-rose-400 animate-pulse' 
                                       : task.status === 'Completed' || task.status === 'Resolved' 
@@ -851,25 +951,28 @@ export default function Dashboard() {
                                 {isNarrow && (
                                   <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${isTaskOverdue ? 'text-rose-700 font-bold' : 'text-slate-800'}`}>
                                     <span>{task.title}</span>
-                                    {(task.start_time || task.due_time) && (
-                                      <span className={`px-1.5 py-0.5 text-[10px] rounded-full font-bold ${isTaskOverdue ? 'bg-rose-200 text-rose-900' : 'bg-slate-200 text-slate-700'}`}>
-                                        {task.start_time ? task.start_time : ''}
-                                        {task.start_time && task.due_time ? ' - ' : ''}
-                                        {task.due_time ? task.due_time : ''}
-                                      </span>
-                                    )}
                                   </div>
                                 )}
                               </>
                             )}
 
-                            {/* 2. RECURRING TASKS TIMELINE BAR */}
+                            {/* 2. RECURRING TASKS WITH INDIVIDUAL DAY BADGES */}
                             {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
+                              const dayDateStr = format(dayDate, 'yyyy-MM-dd');
                               let shouldShow = false;
+
                               if (task.frequency === 'daily') shouldShow = true;
                               else if (task.frequency === 'weekly' && task.recurring_day) shouldShow = DAYS_OF_WEEK[getDay(dayDate)] === task.recurring_day;
                               else if (task.frequency === 'monthly' && task.recurring_date) shouldShow = getDate(dayDate) === Number(task.recurring_date);
+                              
                               if (!shouldShow) return null;
+
+                              const isCompletedThisDay = (task.completed_dates || []).includes(dayDateStr);
+                              const isCancelledThisDay = (task.cancelled_dates || []).includes(dayDateStr);
+
+                              if (!showCompletedCancelled && (isCompletedThisDay || isCancelledThisDay)) {
+                                return null;
+                              }
 
                               const recStartPos = (dayIdx + startFraction) * 60;
                               const recEndPos = (dayIdx + endFraction) * 60;
@@ -879,30 +982,40 @@ export default function Dashboard() {
                               return (
                                 <React.Fragment key={dayIdx}>
                                   <div
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedInstance({
+                                        task,
+                                        dateStr: dayDateStr,
+                                        isCompleted: isCompletedThisDay,
+                                        isCancelled: isCancelledThisDay,
+                                      });
+                                    }}
                                     style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
-                                    className="absolute h-6.5 rounded-lg px-2 flex items-center bg-blue-600 text-white shadow-xs z-10 transition hover:ring-2 hover:ring-blue-300"
-                                    title={`Recurring: ${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
+                                    className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs z-10 transition cursor-pointer hover:ring-2 ${
+                                      isCompletedThisDay
+                                        ? 'bg-emerald-600 text-white ring-emerald-300'
+                                        : isCancelledThisDay
+                                        ? 'bg-rose-500 text-white ring-rose-300 opacity-90'
+                                        : task.type === 'event'
+                                        ? 'bg-violet-600 text-white hover:ring-violet-300'
+                                        : 'bg-blue-600 text-white hover:ring-blue-300'
+                                    }`}
+                                    title={`Click to manage status for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : 'Active'}`}
                                   >
                                     {!recIsNarrow && (
-                                      <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-semibold">
-                                        <span className="truncate pr-1">{task.title}</span>
-                                        {(task.start_time || task.due_time) && (
-                                          <span className="px-1 py-0.2 bg-black/20 text-[9px] rounded whitespace-nowrap shrink-0">
-                                            {task.due_time || task.start_time}
-                                          </span>
-                                        )}
+                                      <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-bold">
+                                        <span className={`truncate pr-1 ${isCancelledThisDay ? 'line-through' : ''}`}>{task.title}</span>
+                                        <span className="text-[9px] px-1 py-0.2 rounded bg-black/20 font-extrabold uppercase shrink-0">
+                                          {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : 'Active'}
+                                        </span>
                                       </div>
                                     )}
                                   </div>
 
                                   {recIsNarrow && (
                                     <div style={{ left: `${recEndPos + 4}px` }} className="absolute flex items-center gap-1 text-[11px] font-semibold text-slate-800 whitespace-nowrap z-0 pointer-events-none">
-                                      <span className="truncate max-w-[80px]">{task.title}</span>
-                                      {(task.start_time || task.due_time) && (
-                                        <span className="px-1.5 py-0.2 bg-blue-100 text-blue-900 text-[9px] rounded-full font-bold">
-                                          {task.due_time || task.start_time}
-                                        </span>
-                                      )}
+                                      <span className={`truncate max-w-[80px] ${isCancelledThisDay ? 'line-through text-rose-600' : ''}`}>{task.title}</span>
                                     </div>
                                   )}
                                 </React.Fragment>
@@ -918,6 +1031,66 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* 🎯 POPUP: MANAGE SPECIFIC DAY INSTANCE (ISOLATED OCCURRENCE) */}
+      {selectedInstance && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-100">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 truncate max-w-[240px]">{selectedInstance.task.title}</h3>
+                <p className="text-xs text-blue-600 font-semibold mt-0.5">Date: {selectedInstance.dateStr}</p>
+              </div>
+              <button onClick={() => setSelectedInstance(null)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-4">
+              Change the status for <b>this occurrence only</b>. Other weekly/daily schedules will stay active.
+            </p>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleSetInstanceStatus('Completed')}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition ${
+                  selectedInstance.isCompleted ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                }`}
+              >
+                <Check className="w-4 h-4" /> {selectedInstance.isCompleted ? 'Marked as Completed' : 'Mark Completed for This Day'}
+              </button>
+
+              <button
+                onClick={() => handleSetInstanceStatus('Cancelled')}
+                className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition ${
+                  selectedInstance.isCancelled ? 'bg-rose-600 text-white shadow-xs' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                }`}
+              >
+                <Ban className="w-4 h-4" /> {selectedInstance.isCancelled ? 'Marked as Cancelled' : 'Cancel for This Day Only'}
+              </button>
+
+              <button
+                onClick={() => handleSetInstanceStatus('Active')}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+              >
+                <RefreshCw className="w-4 h-4" /> Reset to Active
+              </button>
+            </div>
+
+            <div className="border-t border-slate-100 pt-3 mt-4 flex justify-between items-center">
+              <button
+                onClick={() => {
+                  const t = selectedInstance.task;
+                  setSelectedInstance(null);
+                  setActiveTask(t);
+                }}
+                className="text-xs text-blue-600 font-bold hover:underline"
+              >
+                Edit Master Task
+              </button>
+              <button onClick={() => setSelectedInstance(null)} className="text-xs text-slate-500 hover:text-slate-700">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 3. WIDE DOUBLE COLUMN EDIT TASK MODAL */}
       {activeTask && (
