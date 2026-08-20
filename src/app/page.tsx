@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { format, addDays, startOfWeek, differenceInDays, isToday, parseISO, getDay, getDate } from 'date-fns';
-import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat } from 'lucide-react';
+import { format, addDays, startOfWeek, differenceInDays, isToday, parseISO, getDay, getDate, differenceInMinutes } from 'date-fns';
+import { Search, Plus, Calendar, AlertCircle, Clock, History, Trash2, X, RotateCcw, Repeat, Bell } from 'lucide-react';
 
 interface Department {
   id: string;
@@ -37,6 +37,15 @@ interface HistoryItem {
   changed_at: string;
 }
 
+interface ToastNotification {
+  id: string;
+  task: Task;
+  title: string;
+  message: string;
+  type: 'due_now' | '30_min' | '1_hour';
+  timeStr: string;
+}
+
 const PRIORITY_STYLES: Record<TaskPriority, string> = {
   Crit: 'bg-red-100 text-red-700 border-red-300',
   High: 'bg-orange-100 text-orange-700 border-orange-300',
@@ -56,12 +65,49 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// 🎵 Premium Crystal Polyphonic Notification Chime Sound Synthesizer
+const playPremiumChime = (type: 'due_now' | '30_min' | '1_hour') => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+
+    const notes = type === 'due_now' 
+      ? [523.25, 659.25, 1046.50] // C5 -> E5 -> C6 high chime
+      : [587.33, 880.00];         // D5 -> A5 smooth bell tone
+
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.12);
+
+      gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.12);
+      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + idx * 0.12 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + idx * 0.12 + 0.6);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(ctx.currentTime + idx * 0.12);
+      osc.stop(ctx.currentTime + idx * 0.12 + 0.65);
+    });
+  } catch (e) {
+    console.error('Audio chime error:', e);
+  }
+};
+
 export default function Dashboard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   
+  // Messenger-style floating notifications
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  const alertedTasksRef = useRef<Set<string>>(new Set());
+
   // Filters
   const [search, setSearch] = useState('');
   const [selectedDept, setSelectedDept] = useState('All');
@@ -108,17 +154,104 @@ export default function Dashboard() {
     description: '',
   });
 
-  // 21 Days Timeline Window starting from the beginning of this week
   const timelineStart = useMemo(() => startOfWeek(new Date(), { weekStartsOn: 0 }), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  // Live Timer: Real-time update every minute for indicator line
+  // Request Native Notification Permission on mount
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 60000);
-    return () => clearInterval(timer);
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+        Notification.requestPermission();
+      }
+    }
   }, []);
+
+  // Real-time Clock & Smart Task Reminder Interval (Checks every 20 seconds)
+  useEffect(() => {
+    const checkReminders = () => {
+      const now = new Date();
+      setCurrentTime(now);
+
+      tasks.forEach((task) => {
+        if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') return;
+        if (!task.due_date || !task.due_time) return;
+
+        const taskDueDateTime = new Date(`${task.due_date}T${task.due_time}:00`);
+        const diffMinutes = differenceInMinutes(taskDueDateTime, now);
+
+        // 1 Hour Alert (50 - 60 mins)
+        if (diffMinutes > 50 && diffMinutes <= 60) {
+          const alertKey = `${task.id}-1hour`;
+          if (!alertedTasksRef.current.has(alertKey)) {
+            alertedTasksRef.current.add(alertKey);
+            triggerNotification(task, '1_hour', `⏰ 1 Hour Left: Due at ${task.due_time}`);
+          }
+        }
+
+        // 30 Mins Alert (20 - 30 mins)
+        if (diffMinutes > 20 && diffMinutes <= 30) {
+          const alertKey = `${task.id}-30min`;
+          if (!alertedTasksRef.current.has(alertKey)) {
+            alertedTasksRef.current.add(alertKey);
+            triggerNotification(task, '30_min', `⚠️ 30 Minutes Left: Due at ${task.due_time}`);
+          }
+        }
+
+        // Due Now Alert (0 - 2 mins)
+        if (diffMinutes >= -1 && diffMinutes <= 2) {
+          const alertKey = `${task.id}-duenow`;
+          if (!alertedTasksRef.current.has(alertKey)) {
+            alertedTasksRef.current.add(alertKey);
+            triggerNotification(task, 'due_now', `🚨 Task Due Now (${task.due_time})!`);
+          }
+        }
+      });
+    };
+
+    const interval = setInterval(checkReminders, 20000);
+    checkReminders();
+
+    return () => clearInterval(interval);
+  }, [tasks]);
+
+  const triggerNotification = (task: Task, type: 'due_now' | '30_min' | '1_hour', message: string) => {
+    // 1. Play crystal chime sound
+    playPremiumChime(type);
+
+    // 2. Add Floating In-App Toast
+    const newToast: ToastNotification = {
+      id: `${task.id}-${Date.now()}`,
+      task,
+      title: task.title,
+      message,
+      type,
+      timeStr: format(new Date(), 'hh:mm a'),
+    };
+    setToasts((prev) => [newToast, ...prev.slice(0, 4)]);
+
+    // 3. System Push Notification
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      const notif = new Notification(`Task Reminder: ${task.title}`, {
+        body: `${message}\nClick to view details.`,
+        icon: '/favicon.ico',
+      });
+      notif.onclick = () => {
+        window.focus();
+        setActiveTask(task);
+      };
+    }
+  };
+
+  const removeToast = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // When clicking on a Toast notification, open that task!
+  const handleToastClick = (toast: ToastNotification) => {
+    setActiveTask(toast.task);
+    removeToast(toast.id);
+  };
 
   useEffect(() => {
     loadAllData();
@@ -133,7 +266,7 @@ export default function Dashboard() {
     if (data) {
       setDepartments(data);
       if (data.length > 0 && !formData.department_id) {
-        setFormData(prev => ({ ...prev, department_id: data[0].id }));
+        setFormData((prev) => ({ ...prev, department_id: data[0].id }));
       }
     }
   };
@@ -167,7 +300,7 @@ export default function Dashboard() {
       start_time: formData.start_time || null,
       due_time: formData.due_time || null,
       description: formData.description,
-      owner_name: 'Me'
+      owner_name: 'Me',
     };
 
     const { data, error } = await supabase.from('tasks').insert([payload]).select();
@@ -178,12 +311,12 @@ export default function Dashboard() {
         await supabase.from('task_history').insert([{ task_id: data[0].id, action: `Created task: "${formData.title}"` }]);
       }
       setShowAddModal(false);
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
         title: '',
         description: '',
         start_time: '',
-        due_time: ''
+        due_time: '',
       }));
       fetchTasks();
       fetchHistory();
@@ -254,16 +387,16 @@ export default function Dashboard() {
     setActiveQuickFilter(null);
   };
 
-  const todayCount = useMemo(() => tasks.filter(t => isToday(parseISO(t.start_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
-  const overdueCount = useMemo(() => tasks.filter(t => parseISO(t.due_date) < new Date() && t.status !== 'Completed' && t.status !== 'Resolved' && t.status !== 'Cancelled').length, [tasks]);
+  const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
+  const overdueCount = useMemo(() => tasks.filter((t) => parseISO(t.due_date) < new Date() && t.status !== 'Completed' && t.status !== 'Resolved' && t.status !== 'Cancelled').length, [tasks]);
 
-  // Current Live Time Position Calculation (in Pixels)
+  // Current Live Time Position Calculation
   const currentDayIndex = differenceInDays(new Date(), timelineStart);
-  const currentHourPercent = (currentTime.getHours() * 60 + currentTime.getMinutes()) / 1440; // 0 to 1 ratio of the day
+  const currentHourPercent = (currentTime.getHours() * 60 + currentTime.getMinutes()) / 1440;
   const liveIndicatorPosition = currentDayIndex >= 0 && currentDayIndex < 21 ? (currentDayIndex + currentHourPercent) * 60 : null;
 
   const filteredTasks = useMemo(() => {
-    return tasks.filter(task => {
+    return tasks.filter((task) => {
       if (search && !task.title.toLowerCase().includes(search.toLowerCase()) && !(task.description || '').toLowerCase().includes(search.toLowerCase())) {
         return false;
       }
@@ -290,9 +423,62 @@ export default function Dashboard() {
   }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate]);
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
+    <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative">
       
-      {/* 1. TOP HEADER & FILTERS */}
+      {/* ========================================================================= */}
+      {/* 🚀 MESSENGER-STYLE FLOATING SIDE NOTIFICATIONS (CLICKABLE TO OPEN TASK) */}
+      {/* ========================================================================= */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            onClick={() => handleToastClick(toast)}
+            className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-2xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 hover:shadow-indigo-500/20 active:scale-98 animate-in slide-in-from-right-10 group ${
+              toast.type === 'due_now'
+                ? 'bg-rose-50/95 border-rose-300 text-rose-900'
+                : toast.type === '30_min'
+                ? 'bg-amber-50/95 border-amber-300 text-amber-900'
+                : 'bg-blue-50/95 border-blue-300 text-blue-900'
+            }`}
+          >
+            {/* Glowing Avatar/Icon */}
+            <div
+              className={`p-2.5 rounded-full shrink-0 shadow-sm transition-transform group-hover:scale-110 ${
+                toast.type === 'due_now'
+                  ? 'bg-rose-600 text-white animate-bounce'
+                  : toast.type === '30_min'
+                  ? 'bg-amber-500 text-white animate-pulse'
+                  : 'bg-blue-600 text-white'
+              }`}
+            >
+              <Bell className="w-4 h-4" />
+            </div>
+
+            {/* Notification Body */}
+            <div className="flex-1 overflow-hidden">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">{toast.title}</h4>
+                <span className="text-[10px] opacity-70 shrink-0">{toast.timeStr}</span>
+              </div>
+              <p className="text-xs font-medium mt-0.5 leading-snug">{toast.message}</p>
+              <span className="text-[10px] text-blue-600 font-bold mt-1 inline-block opacity-0 group-hover:opacity-100 transition">
+                👆 Click to open details
+              </span>
+            </div>
+
+            {/* Close Button */}
+            <button
+              onClick={(e) => removeToast(toast.id, e)}
+              className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-black/10 shrink-0 transition"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* 1. TOP HEADER & CONTROLS */}
       <header className="bg-white border-b border-slate-200 px-6 py-3 sticky top-0 z-40 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -308,7 +494,7 @@ export default function Dashboard() {
           <div className="flex items-center flex-wrap gap-2.5">
             {/* Quick Filters */}
             <button
-              onClick={() => setActiveQuickFilter(prev => prev === 'today' ? null : 'today')}
+              onClick={() => setActiveQuickFilter((prev) => (prev === 'today' ? null : 'today'))}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
                 activeQuickFilter === 'today'
                   ? 'bg-amber-500 text-white border-amber-600 shadow-xs'
@@ -319,7 +505,7 @@ export default function Dashboard() {
             </button>
 
             <button
-              onClick={() => setActiveQuickFilter(prev => prev === 'overdue' ? null : 'overdue')}
+              onClick={() => setActiveQuickFilter((prev) => (prev === 'overdue' ? null : 'overdue'))}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
                 activeQuickFilter === 'overdue'
                   ? 'bg-rose-600 text-white border-rose-700 shadow-xs'
@@ -364,7 +550,7 @@ export default function Dashboard() {
               className="px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="All">All Categories</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
 
             {/* Date Range */}
@@ -411,7 +597,7 @@ export default function Dashboard() {
       <div className="flex-1 overflow-x-auto overflow-y-auto">
         <div className="min-w-[1680px] relative">
           
-          {/* LIVE CURRENT TIME INDICATOR LINE (Vertical Red Line with Glowing Dot) */}
+          {/* LIVE CURRENT TIME INDICATOR LINE */}
           {liveIndicatorPosition !== null && (
             <div
               style={{ left: `calc(400px + ${liveIndicatorPosition}px)` }}
@@ -421,7 +607,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Header Row (Sticky Left + Sticky Top) */}
+          {/* Header Row */}
           <div className="grid grid-cols-[400px_repeat(21,60px)] bg-slate-100 border-b border-slate-200 sticky top-0 z-20 shadow-xs">
             <div className="p-3 text-xs font-bold text-slate-600 uppercase border-r border-slate-200 bg-slate-100 sticky left-0 z-30 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
               Task & Details
@@ -445,9 +631,9 @@ export default function Dashboard() {
             </div>
           ) : (
             departments
-              .filter(dept => selectedDept === 'All' || selectedDept === dept.id)
+              .filter((dept) => selectedDept === 'All' || selectedDept === dept.id)
               .map((dept) => {
-                const deptTasks = filteredTasks.filter(t => t.department_id === dept.id);
+                const deptTasks = filteredTasks.filter((t) => t.department_id === dept.id);
 
                 return (
                   <div key={dept.id} className="border-b border-slate-200">
@@ -522,7 +708,7 @@ export default function Dashboard() {
                               </div>
                             </div>
 
-                            {/* Gantt Timeline Bar & Recurrence Indicators */}
+                            {/* Gantt Timeline Bar */}
                             <div className="col-span-21 relative h-full flex items-center">
                               {task.frequency === 'once' && isVisible && (
                                 <div
@@ -624,7 +810,7 @@ export default function Dashboard() {
                     onChange={(e) => setActiveTask({ ...activeTask, department_id: e.target.value })}
                     className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 outline-none"
                   >
-                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </select>
                 </div>
 
@@ -737,7 +923,7 @@ export default function Dashboard() {
                 type="text"
                 placeholder="Task Name"
                 value={formData.title}
-                onChange={e => setFormData({ ...formData, title: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg text-sm outline-none"
               />
               
@@ -745,7 +931,7 @@ export default function Dashboard() {
                 rows={2}
                 placeholder="Description / Notes (Optional)"
                 value={formData.description}
-                onChange={e => setFormData({ ...formData, description: e.target.value })}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg text-sm outline-none resize-none"
               />
 
@@ -753,16 +939,16 @@ export default function Dashboard() {
                 <select
                   required
                   value={formData.department_id}
-                  onChange={e => setFormData({ ...formData, department_id: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, department_id: e.target.value })}
                   className="w-full px-3 py-2 border rounded-lg text-xs outline-none"
                 >
                   <option value="">Select Category</option>
-                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
 
                 <select
                   value={formData.priority}
-                  onChange={e => setFormData({ ...formData, priority: e.target.value as TaskPriority })}
+                  onChange={(e) => setFormData({ ...formData, priority: e.target.value as TaskPriority })}
                   className="px-3 py-2 border rounded-lg text-xs outline-none"
                 >
                   <option value="Medi">Medium Priority</option>
@@ -775,7 +961,7 @@ export default function Dashboard() {
               <div className="grid grid-cols-2 gap-2">
                 <select
                   value={formData.status}
-                  onChange={e => setFormData({ ...formData, status: e.target.value as TaskStatus })}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value as TaskStatus })}
                   className="px-3 py-2 border rounded-lg text-xs outline-none"
                 >
                   <option value="Open">Open</option>
@@ -789,7 +975,7 @@ export default function Dashboard() {
 
                 <select
                   value={formData.frequency}
-                  onChange={e => setFormData({ ...formData, frequency: e.target.value as TaskFrequency })}
+                  onChange={(e) => setFormData({ ...formData, frequency: e.target.value as TaskFrequency })}
                   className="px-3 py-2 border rounded-lg text-xs outline-none"
                 >
                   <option value="once">Once</option>
@@ -800,16 +986,15 @@ export default function Dashboard() {
                 </select>
               </div>
 
-              {/* Dynamic Frequency Fields */}
               {formData.frequency === 'weekly' && (
                 <div className="bg-slate-50 p-2 rounded-lg border">
                   <label className="text-[11px] font-semibold text-slate-600">Select Day of the Week</label>
                   <select
                     value={formData.recurring_day}
-                    onChange={e => setFormData({ ...formData, recurring_day: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, recurring_day: e.target.value })}
                     className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none"
                   >
-                    {DAYS_OF_WEEK.map(day => <option key={day} value={day}>{day}</option>)}
+                    {DAYS_OF_WEEK.map((day) => <option key={day} value={day}>{day}</option>)}
                   </select>
                 </div>
               )}
@@ -822,7 +1007,7 @@ export default function Dashboard() {
                     min={1}
                     max={31}
                     value={formData.recurring_date}
-                    onChange={e => setFormData({ ...formData, recurring_date: Number(e.target.value) })}
+                    onChange={(e) => setFormData({ ...formData, recurring_date: Number(e.target.value) })}
                     className="w-full px-2.5 py-1.5 border rounded-lg text-xs mt-1 bg-white outline-none"
                   />
                 </div>
@@ -836,13 +1021,13 @@ export default function Dashboard() {
                     type="date"
                     required
                     value={formData.start_date}
-                    onChange={e => setFormData({ ...formData, start_date: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
                     className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
                   />
                   <input
                     type="time"
                     value={formData.start_time}
-                    onChange={e => setFormData({ ...formData, start_time: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, start_time: e.target.value })}
                     className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
                     placeholder="Time (Optional)"
                   />
@@ -853,13 +1038,13 @@ export default function Dashboard() {
                     type="date"
                     required
                     value={formData.due_date}
-                    onChange={e => setFormData({ ...formData, due_date: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
                     className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
                   />
                   <input
                     type="time"
                     value={formData.due_time}
-                    onChange={e => setFormData({ ...formData, due_time: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, due_time: e.target.value })}
                     className="w-full px-2.5 py-1 border rounded-lg text-xs mt-1 bg-white outline-none"
                     placeholder="Time (Optional)"
                   />
@@ -881,12 +1066,12 @@ export default function Dashboard() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
             <h2 className="text-base font-bold text-slate-800 mb-3">Categories Master</h2>
             <div className="flex gap-2 mb-3">
-              <input type="text" placeholder="Category Name" value={newDeptName} onChange={e => setNewDeptName(e.target.value)} className="flex-1 px-3 py-1.5 border rounded-lg text-sm outline-none" />
-              <input type="color" value={newDeptColor} onChange={e => setNewDeptColor(e.target.value)} className="w-10 h-9 p-0.5 border rounded-lg cursor-pointer" />
+              <input type="text" placeholder="Category Name" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="flex-1 px-3 py-1.5 border rounded-lg text-sm outline-none" />
+              <input type="color" value={newDeptColor} onChange={(e) => setNewDeptColor(e.target.value)} className="w-10 h-9 p-0.5 border rounded-lg cursor-pointer" />
               <button onClick={handleAddDepartment} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium">Add</button>
             </div>
             <div className="space-y-1.5 max-h-48 overflow-y-auto mb-4 border-t pt-2">
-              {departments.map(d => (
+              {departments.map((d) => (
                 <div key={d.id} className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 rounded-md">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color }}></div>
                   <span className="text-sm font-medium text-slate-700">{d.name}</span>
@@ -909,7 +1094,7 @@ export default function Dashboard() {
               {history.length === 0 ? (
                 <p className="text-xs text-slate-400 text-center py-4">No history records yet.</p>
               ) : (
-                history.map(item => (
+                history.map((item) => (
                   <div key={item.id} className="text-xs bg-slate-50 p-2.5 rounded border border-slate-100">
                     <p className="font-semibold text-slate-700">{item.action}</p>
                     <p className="text-slate-400 mt-1">{format(parseISO(item.changed_at), 'MMM dd, yyyy - hh:mm a')}</p>
