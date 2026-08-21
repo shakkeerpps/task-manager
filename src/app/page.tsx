@@ -92,6 +92,30 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// Helper to calculate exact task timing states
+const getTaskTimingState = (task: Task, now: Date) => {
+  const isDone = task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled';
+  if (isDone) return { isOverdue: false, isStartingSoon: false };
+
+  // Due Date & Time check
+  const [dh, dm] = (task.due_time || '23:59').split(':').map(Number);
+  const dueParsed = parseISO(task.due_date);
+  const dueDateTime = new Date(dueParsed.getFullYear(), dueParsed.getMonth(), dueParsed.getDate(), dh, dm, 59);
+
+  const isOverdue = now > dueDateTime;
+
+  // Start Date & Time check
+  const effectiveStart = task.start_date || task.due_date;
+  const [sh, sm] = (task.start_time || '00:00').split(':').map(Number);
+  const startParsed = parseISO(effectiveStart);
+  const startDateTime = new Date(startParsed.getFullYear(), startParsed.getMonth(), startParsed.getDate(), sh, sm, 0);
+
+  // If start date is today, or starting within 24 hours and not yet overdue
+  const isStartingSoon = !isOverdue && (isToday(startParsed) || (startDateTime > now && differenceInSeconds(startDateTime, now) <= 86400));
+
+  return { isOverdue, isStartingSoon };
+};
+
 // 🎨 ADVANCED WORD-STYLE RICH TEXT & TABLE EDITOR
 function AdvancedRichEditor({ value, onChange }: { value: string; onChange: (val: string) => void }) {
   const editorRef = useRef<HTMLDivElement>(null);
@@ -216,7 +240,7 @@ export default function Dashboard() {
   const [urgentPopupAlert, setUrgentPopupAlert] = useState<UrgentPopupAlert | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
-  // 🔊 UNLOCK & PLAY AUDIO
+  // Audio Unlock
   const unlockAudio = useCallback(() => {
     try {
       if (!audioContextRef.current) {
@@ -296,7 +320,6 @@ export default function Dashboard() {
     }
   }, [unlockAudio]);
 
-  // Request Notification Permission
   useEffect(() => {
     setMounted(true);
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -429,7 +452,6 @@ export default function Dashboard() {
     return () => clearInterval(timer);
   }, [tasks, playAlarmSound]);
 
-  // Copy Link Helper
   const handleCopyLink = (link: string) => {
     navigator.clipboard.writeText(link);
     setLinkCopied(true);
@@ -780,7 +802,7 @@ export default function Dashboard() {
   };
 
   const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date || t.due_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
-  const overdueCount = useMemo(() => tasks.filter((t) => parseISO(t.due_date) < new Date() && t.status !== 'Completed' && t.status !== 'Resolved' && t.status !== 'Cancelled').length, [tasks]);
+  const overdueCount = useMemo(() => tasks.filter((t) => getTaskTimingState(t, currentTime).isOverdue).length, [tasks, currentTime]);
 
   const elapsedDays = (currentTime.getTime() - timelineStart.getTime()) / 86400000;
   const liveIndicatorPosition = mounted && elapsedDays >= 0 && elapsedDays < 21 ? elapsedDays * 60 : null;
@@ -796,18 +818,18 @@ export default function Dashboard() {
       
       const effectiveStart = task.start_date || task.due_date;
       if (activeQuickFilter === 'today' && !isToday(parseISO(effectiveStart)) && !isToday(parseISO(task.due_date))) return false;
-      if (activeQuickFilter === 'overdue' && !(parseISO(task.due_date) < new Date() && task.status !== 'Completed' && task.status !== 'Resolved' && task.status !== 'Cancelled')) return false;
+      if (activeQuickFilter === 'overdue' && !getTaskTimingState(task, currentTime).isOverdue) return false;
       if (filterFromDate && effectiveStart < filterFromDate) return false;
       if (filterToDate && task.due_date > filterToDate) return false;
 
       return true;
     });
-  }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate, showCompletedCancelled]);
+  }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate, showCompletedCancelled, currentTime]);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative">
       
-      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP (WITH COPY LINK & JOIN NOW) */}
+      {/* 🚨 LIVE URGENT ON-SCREEN ALARM MODAL POPUP */}
       {urgentPopupAlert && (
         <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in zoom-in-95 duration-200">
           <div className={`bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 border-2 transform transition-all ${
@@ -851,7 +873,7 @@ export default function Dashboard() {
                 <span className={`font-bold px-2 py-0.5 rounded ${PRIORITY_STYLES[urgentPopupAlert.task.priority]}`}>{urgentPopupAlert.task.priority}</span>
               </div>
 
-              {/* 📹 GOOGLE MEET ACTION BUTTONS: COPY LINK & JOIN NOW */}
+              {/* GOOGLE MEET ACTIONS */}
               {urgentPopupAlert.task.meet_link && (
                 <div className="pt-2.5 border-t border-slate-200/80 space-y-2">
                   <div className="flex items-center gap-2">
@@ -901,7 +923,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* 🚀 LIVE ACTIVE FLOATING ALERTS (BOTTOM RIGHT) */}
+      {/* 🚀 LIVE ACTIVE FLOATING ALERTS */}
       <div className="fixed bottom-6 right-6 z-40 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
         {activeReminders.map((reminder) => (
           <div
@@ -909,12 +931,12 @@ export default function Dashboard() {
             onClick={() => setActiveTask(reminder.task)}
             className={`pointer-events-auto cursor-pointer flex items-start gap-3 p-4 rounded-2xl shadow-xl border backdrop-blur-md transition-all duration-300 transform hover:scale-102 active:scale-98 animate-in slide-in-from-right-10 group ${
               reminder.typeLabel.includes('start')
-                ? 'bg-blue-50/95 border-blue-300 text-blue-950 ring-2 ring-blue-500/30'
-                : reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500/30' : 'bg-white/95 border-amber-300 text-slate-900 shadow-amber-500/10'
+                ? 'bg-amber-50/95 border-amber-300 text-amber-950 ring-2 ring-amber-500/30'
+                : reminder.isOverdue ? 'bg-rose-50/95 border-rose-300 text-rose-950 ring-2 ring-rose-500/30' : 'bg-white/95 border-slate-200 text-slate-900 shadow-slate-500/10'
             }`}
           >
             <div className={`p-2.5 rounded-xl shrink-0 shadow-sm transition-transform group-hover:scale-110 ${
-              reminder.typeLabel.includes('start') ? 'bg-blue-600 text-white animate-pulse' : reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-amber-500 text-white animate-pulse'
+              reminder.typeLabel.includes('start') ? 'bg-amber-500 text-white animate-pulse' : reminder.isOverdue ? 'bg-rose-600 text-white animate-bounce' : 'bg-blue-600 text-white'
             }`}>
               {reminder.typeLabel.includes('start') ? <PlayCircle className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
             </div>
@@ -923,13 +945,13 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-bold truncate pr-2 group-hover:text-blue-600 transition">{reminder.task.title}</h4>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  reminder.typeLabel.includes('start') ? 'bg-blue-200 text-blue-800' : reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-amber-100 text-amber-800 border border-amber-200'
+                  reminder.typeLabel.includes('start') ? 'bg-amber-100 text-amber-900 border border-amber-300' : reminder.isOverdue ? 'bg-rose-200 text-rose-800' : 'bg-slate-100 text-slate-800 border border-slate-200'
                 }`}>
                   {reminder.typeLabel.includes('start') ? reminder.task.start_time : reminder.task.due_time || 'Today'}
                 </span>
               </div>
-              <p className={`text-xs font-bold mt-1 ${reminder.typeLabel.includes('start') ? 'text-blue-700' : reminder.isOverdue ? 'text-rose-700' : 'text-amber-800'}`}>
-                {reminder.typeLabel.includes('start') ? '🚀 ' : reminder.isOverdue ? '🚨 ' : '⏳ '}{reminder.timeLabel}
+              <p className={`text-xs font-bold mt-1 ${reminder.typeLabel.includes('start') ? 'text-amber-700' : reminder.isOverdue ? 'text-rose-700' : 'text-slate-600'}`}>
+                {reminder.typeLabel.includes('start') ? '⚠️ ' : reminder.isOverdue ? '🚨 ' : '⏳ '}{reminder.timeLabel}
               </p>
               <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-black/5">
                 <span className="text-[10px] text-blue-600 font-semibold opacity-0 group-hover:opacity-100 transition">Click to view/edit</span>
@@ -962,7 +984,6 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center flex-wrap gap-2.5">
-            {/* Audio Test Button */}
             <button
               onClick={() => playAlarmSound('exact-alarm')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
@@ -1075,7 +1096,7 @@ export default function Dashboard() {
                     </div>
 
                     {deptTasks.map((task) => {
-                      const isTaskOverdue = parseISO(task.due_date) < new Date() && task.status !== 'Completed' && task.status !== 'Resolved' && task.status !== 'Cancelled';
+                      const { isOverdue, isStartingSoon } = getTaskTimingState(task, currentTime);
                       const effectiveStart = task.start_date || task.due_date;
                       const startParsed = startOfDay(parseISO(effectiveStart));
                       const endParsed = startOfDay(parseISO(task.due_date));
@@ -1104,13 +1125,13 @@ export default function Dashboard() {
                       const plainDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '') : '';
 
                       return (
-                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${isTaskOverdue ? 'bg-rose-50/40' : ''}`}>
+                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${isOverdue ? 'bg-rose-50/40' : isStartingSoon ? 'bg-amber-50/40' : ''}`}>
                           
                           <div onClick={() => setActiveTask(task)} className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] cursor-pointer">
                             <div className="flex flex-col truncate pr-2">
                               <div className="flex items-center gap-1.5">
                                 {task.type === 'event' && <Video className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
-                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${isTaskOverdue ? 'text-rose-700 font-bold' : 'text-slate-800'}`} title={task.title}>
+                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${isOverdue ? 'text-rose-700 font-bold' : isStartingSoon ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
                                   {task.title}
                                 </span>
                                 {task.frequency !== 'once' && (
@@ -1130,22 +1151,31 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${isTaskOverdue ? 'bg-rose-100 text-rose-800 border-rose-300 font-bold' : STATUS_STYLES[task.status]}`}>
-                                {isTaskOverdue ? 'Overdue' : task.status}
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                isOverdue 
+                                  ? 'bg-rose-100 text-rose-800 border-rose-300' 
+                                  : isStartingSoon 
+                                  ? 'bg-amber-100 text-amber-800 border-amber-300' 
+                                  : STATUS_STYLES[task.status]
+                              }`}>
+                                {isOverdue ? 'Overdue' : isStartingSoon ? 'Start Soon' : task.status}
                               </span>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
                             </div>
                           </div>
 
                           <div className="col-span-21 relative h-full flex items-center">
+                            {/* 1. ONCE TASKS TIMELINE BAR (RED for Overdue, YELLOW for Start Soon, BLUE/VIOLET/GREEN for Active/Done) */}
                             {task.frequency === 'once' && isVisible && (
                               <>
                                 <div
                                   onClick={() => setActiveTask(task)}
                                   style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
                                   className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${
-                                    isTaskOverdue 
+                                    isOverdue 
                                       ? 'bg-rose-600 text-white ring-2 ring-rose-400 animate-pulse' 
+                                      : isStartingSoon
+                                      ? 'bg-amber-500 text-slate-950 font-bold ring-2 ring-amber-400 animate-pulse'
                                       : task.status === 'Completed' || task.status === 'Resolved' 
                                       ? 'bg-emerald-500 text-white' 
                                       : task.status === 'Blocked' 
@@ -1169,13 +1199,14 @@ export default function Dashboard() {
                                 </div>
 
                                 {isNarrow && (
-                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${isTaskOverdue ? 'text-rose-700 font-bold' : 'text-slate-800'}`}>
+                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${isOverdue ? 'text-rose-700 font-bold' : isStartingSoon ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
                                     <span>{task.title}</span>
                                   </div>
                                 )}
                               </>
                             )}
 
+                            {/* 2. RECURRING TASKS WITH INDIVIDUAL DAY STATUSES */}
                             {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
                               const dayDateStr = format(dayDate, 'yyyy-MM-dd');
                               let shouldShow = false;
@@ -1216,17 +1247,21 @@ export default function Dashboard() {
                                         ? 'bg-emerald-600 text-white ring-emerald-300'
                                         : isCancelledThisDay
                                         ? 'bg-rose-500 text-white ring-rose-300 opacity-90'
+                                        : isOverdue
+                                        ? 'bg-rose-600 text-white ring-rose-400'
+                                        : isStartingSoon
+                                        ? 'bg-amber-500 text-slate-950 ring-amber-400'
                                         : task.type === 'event'
                                         ? 'bg-violet-600 text-white hover:ring-violet-300'
                                         : 'bg-blue-600 text-white hover:ring-blue-300'
                                     }`}
-                                    title={`Click to manage status for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : 'Active'}`}
+                                    title={`Click to manage status for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : isOverdue ? 'Overdue' : 'Active'}`}
                                   >
                                     {!recIsNarrow && (
                                       <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-bold">
                                         <span className={`truncate pr-1 ${isCancelledThisDay ? 'line-through' : ''}`}>{task.title}</span>
                                         <span className="text-[9px] px-1 py-0.2 rounded bg-black/20 font-extrabold uppercase shrink-0">
-                                          {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : 'Active'}
+                                          {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : isOverdue ? 'Overdue' : isStartingSoon ? 'Starting' : 'Active'}
                                         </span>
                                       </div>
                                     )}
