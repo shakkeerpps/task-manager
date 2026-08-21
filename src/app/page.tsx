@@ -103,16 +103,19 @@ const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'F
 // Helper to get time for a specific date (considers custom override if present)
 const getTimesForDate = (task: Task, dateStr: string) => {
   const custom = task.custom_day_times?.[dateStr];
+  const startTimeVal = custom?.start_time !== undefined ? custom.start_time : task.start_time;
+  const dueTimeVal = custom?.due_time !== undefined ? custom.due_time : task.due_time;
+
   return {
-    start_time: custom?.start_time !== undefined ? custom.start_time : (task.start_time || '00:00'),
-    due_time: custom?.due_time !== undefined ? custom.due_time : (task.due_time || '23:59'),
+    start_time: startTimeVal || '00:00',
+    due_time: dueTimeVal || '23:59',
     isCustom: !!custom
   };
 };
 
 const getTaskTimingState = (task: Task, now: Date) => {
   const isDone = task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled';
-  if (isDone) return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: task.status, badgeClass: STATUS_STYLES[task.status] };
+  if (isDone) return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: task.status, badgeClass: STATUS_STYLES[task.status], barClass: '' };
 
   const todayStr = format(now, 'yyyy-MM-dd');
   const { start_time, due_time } = getTimesForDate(task, todayStr);
@@ -1072,6 +1075,7 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center flex-wrap gap-2.5">
+            {/* Audio Test Button */}
             <button
               onClick={() => playAlarmSound('exact-alarm')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
