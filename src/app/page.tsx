@@ -24,6 +24,11 @@ type TaskPriority = 'Crit' | 'High' | 'Medi' | 'Low';
 type TaskFrequency = 'once' | 'daily' | 'weekly' | 'monthly' | 'yearly';
 type EntryType = 'task' | 'event';
 
+interface CustomDayTime {
+  start_time?: string | null;
+  due_time?: string | null;
+}
+
 interface Task {
   id: string;
   title: string;
@@ -43,6 +48,7 @@ interface Task {
   recurring_date?: number;
   completed_dates?: string[];
   cancelled_dates?: string[];
+  custom_day_times?: Record<string, CustomDayTime>;
 }
 
 interface HistoryItem {
@@ -64,6 +70,8 @@ interface SelectedInstance {
   dateStr: string;
   isCompleted: boolean;
   isCancelled: boolean;
+  currentStartTime: string;
+  currentDueTime: string;
 }
 
 interface UrgentPopupAlert {
@@ -92,20 +100,30 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// 🎯 ACCURATE TIMING & OVERDUE CALCULATION
+// Helper to get time for a specific date (considers custom override if present)
+const getTimesForDate = (task: Task, dateStr: string) => {
+  const custom = task.custom_day_times?.[dateStr];
+  return {
+    start_time: custom?.start_time !== undefined ? custom.start_time : (task.start_time || '00:00'),
+    due_time: custom?.due_time !== undefined ? custom.due_time : (task.due_time || '23:59'),
+    isCustom: !!custom
+  };
+};
+
 const getTaskTimingState = (task: Task, now: Date) => {
   const isDone = task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled';
   if (isDone) return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: task.status, badgeClass: STATUS_STYLES[task.status] };
 
-  // Due Time calculation
-  const [dh, dm] = (task.due_time || '23:59').split(':').map(Number);
-  const dueParts = task.due_date.split('-').map(Number);
+  const todayStr = format(now, 'yyyy-MM-dd');
+  const { start_time, due_time } = getTimesForDate(task, todayStr);
+
+  const [dh, dm] = due_time.split(':').map(Number);
+  const dueParts = (task.frequency === 'once' ? task.due_date : todayStr).split('-').map(Number);
   const dueDateTime = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
 
   const diffDueSec = differenceInSeconds(dueDateTime, now);
   const diffDueMin = Math.floor(diffDueSec / 60);
 
-  // Overdue Check (Only when current time is past Due Date & Time)
   if (diffDueSec < 0) {
     const overdueMins = Math.abs(diffDueMin);
     const hrs = Math.floor(overdueMins / 60);
@@ -121,16 +139,14 @@ const getTaskTimingState = (task: Task, now: Date) => {
     };
   }
 
-  // Start Time Check
-  const effectiveStart = task.start_date || task.due_date;
-  const [sh, sm] = (task.start_time || '00:00').split(':').map(Number);
+  const effectiveStart = task.frequency === 'once' ? (task.start_date || task.due_date) : todayStr;
+  const [sh, sm] = start_time.split(':').map(Number);
   const startParts = effectiveStart.split('-').map(Number);
   const startDateTime = new Date(startParts[0], startParts[1] - 1, startParts[2], sh, sm, 0);
 
   const diffStartSec = differenceInSeconds(startDateTime, now);
   const diffStartMin = Math.floor(diffStartSec / 60);
 
-  // Started or Starts within 10 mins
   if (diffStartMin <= 0 && diffDueSec > 0) {
     const hrs = Math.floor(diffDueMin / 60);
     const mins = diffDueMin % 60;
@@ -146,7 +162,6 @@ const getTaskTimingState = (task: Task, now: Date) => {
     };
   }
 
-  // Due in Minutes / Hours
   if (diffDueMin <= 1440) {
     const hrs = Math.floor(diffDueMin / 60);
     const mins = diffDueMin % 60;
@@ -376,7 +391,6 @@ export default function Dashboard() {
     }
   }, [unlockAudio]);
 
-  // Request Notification Permission
   useEffect(() => {
     setMounted(true);
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -408,22 +422,24 @@ export default function Dashboard() {
 
         if (!isApplicableToday) return;
 
+        const { start_time, due_time } = getTimesForDate(task, todayStr);
+
         // 1. START TIME (3 MINS PRE-ALERT & EXACT START)
-        if (task.start_time) {
-          const [sh, sm] = task.start_time.split(':').map(Number);
-          const startParts = (task.start_date || task.due_date).split('-').map(Number);
+        if (start_time) {
+          const [sh, sm] = start_time.split(':').map(Number);
+          const startParts = (task.frequency === 'once' ? (task.start_date || task.due_date) : todayStr).split('-').map(Number);
           const startTargetDate = new Date(startParts[0], startParts[1] - 1, startParts[2], sh, sm, 0);
           const diffSec = differenceInSeconds(startTargetDate, now);
 
           if (diffSec <= 180 && diffSec >= 170) {
-            const notifKey = `start-pre3-${task.id}-${todayStr}-${task.start_time}`;
+            const notifKey = `start-pre3-${task.id}-${todayStr}-${start_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
               notifiedEventsRef.current.add(notifKey);
               playAlarmSound('warning-beep');
 
               if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                 const n = new Notification(`⚠️ Starts in 3 Mins: ${task.title}`, {
-                  body: `Scheduled at ${task.start_time}. Get ready!`,
+                  body: `Scheduled at ${start_time}. Get ready!`,
                   icon: '/favicon.ico',
                   requireInteraction: true,
                 });
@@ -433,7 +449,7 @@ export default function Dashboard() {
           }
 
           if (diffSec <= 0 && diffSec >= -5) {
-            const notifKey = `start-exact-${task.id}-${todayStr}-${task.start_time}`;
+            const notifKey = `start-exact-${task.id}-${todayStr}-${start_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
               notifiedEventsRef.current.add(notifKey);
               playAlarmSound('exact-alarm');
@@ -441,13 +457,13 @@ export default function Dashboard() {
               setUrgentPopupAlert({
                 task,
                 alertType: 'start',
-                timeStr: task.start_time,
+                timeStr: start_time,
                 message: 'Task is starting right now!',
               });
 
               if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                 const n = new Notification(`🚀 STARTING NOW: ${task.title}`, {
-                  body: `Time: ${task.start_time}. Task has begun.`,
+                  body: `Time: ${start_time}. Task has begun.`,
                   icon: '/favicon.ico',
                   requireInteraction: true,
                 });
@@ -458,21 +474,21 @@ export default function Dashboard() {
         }
 
         // 2. DUE TIME (3 MINS PRE-ALERT & EXACT DUE)
-        if (task.due_time) {
-          const [dh, dm] = task.due_time.split(':').map(Number);
-          const dueParts = task.due_date.split('-').map(Number);
+        if (due_time) {
+          const [dh, dm] = due_time.split(':').map(Number);
+          const dueParts = (task.frequency === 'once' ? task.due_date : todayStr).split('-').map(Number);
           const dueTargetDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
           const diffSec = differenceInSeconds(dueTargetDate, now);
 
           if (diffSec <= 180 && diffSec >= 170) {
-            const notifKey = `due-pre3-${task.id}-${todayStr}-${task.due_time}`;
+            const notifKey = `due-pre3-${task.id}-${todayStr}-${due_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
               notifiedEventsRef.current.add(notifKey);
               playAlarmSound('warning-beep');
 
               if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                 const n = new Notification(`⏳ Due in 3 Mins: ${task.title}`, {
-                  body: `Deadline: ${task.due_time}. Wrap up now!`,
+                  body: `Deadline: ${due_time}. Wrap up now!`,
                   icon: '/favicon.ico',
                   requireInteraction: true,
                 });
@@ -482,7 +498,7 @@ export default function Dashboard() {
           }
 
           if (diffSec <= 0 && diffSec >= -5) {
-            const notifKey = `due-exact-${task.id}-${todayStr}-${task.due_time}`;
+            const notifKey = `due-exact-${task.id}-${todayStr}-${due_time}`;
             if (!notifiedEventsRef.current.has(notifKey)) {
               notifiedEventsRef.current.add(notifKey);
               playAlarmSound('exact-alarm');
@@ -490,13 +506,13 @@ export default function Dashboard() {
               setUrgentPopupAlert({
                 task,
                 alertType: 'due',
-                timeStr: task.due_time,
+                timeStr: due_time,
                 message: 'Task deadline reached right now!',
               });
 
               if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                 const n = new Notification(`⏰ DUE RIGHT NOW: ${task.title}`, {
-                  body: `Due Time: ${task.due_time} • Priority: ${task.priority}`,
+                  body: `Due Time: ${due_time} • Priority: ${task.priority}`,
                   icon: '/favicon.ico',
                   requireInteraction: true,
                 });
@@ -591,8 +607,10 @@ export default function Dashboard() {
       if (compDates.includes(todayStr) || cancDates.includes(todayStr)) return;
       if (task.frequency === 'once' && (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled')) return;
 
-      if (task.start_time) {
-        const [sh, sm] = task.start_time.split(':').map(Number);
+      const { start_time, due_time } = getTimesForDate(task, todayStr);
+
+      if (start_time) {
+        const [sh, sm] = start_time.split(':').map(Number);
         const startTarget = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm, 0);
         const diffSec = differenceInSeconds(startTarget, now);
         const diffMin = Math.round(diffSec / 60);
@@ -610,9 +628,9 @@ export default function Dashboard() {
         }
       }
 
-      if (task.due_time) {
-        const [dh, dm] = task.due_time.split(':').map(Number);
-        const dueParts = task.due_date.split('-').map(Number);
+      if (due_time) {
+        const [dh, dm] = due_time.split(':').map(Number);
+        const dueParts = (task.frequency === 'once' ? task.due_date : todayStr).split('-').map(Number);
         const dueTarget = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
         const diffSec = differenceInSeconds(dueTarget, now);
         const diffMin = Math.round(diffSec / 60);
@@ -667,6 +685,7 @@ export default function Dashboard() {
           participants: t.participants || ['vertexsolutionsptb@gmail.com'],
           completed_dates: t.completed_dates || [],
           cancelled_dates: t.cancelled_dates || [],
+          custom_day_times: t.custom_day_times || {},
         }))
       );
     }
@@ -712,6 +731,7 @@ export default function Dashboard() {
       owner_name: 'Me',
       completed_dates: [],
       cancelled_dates: [],
+      custom_day_times: {},
     };
 
     const { data, error } = await supabase.from('tasks').insert([payload]).select();
@@ -737,7 +757,8 @@ export default function Dashboard() {
     }
   };
 
-  const handleSetInstanceStatus = async (status: 'Active' | 'Completed' | 'Cancelled') => {
+  // 🎯 UPDATE DAY INSTANCE: STATUS & INDIVIDUAL TIME OVERRIDES
+  const handleUpdateInstance = async (status: 'Active' | 'Completed' | 'Cancelled', newStart: string, newDue: string) => {
     if (!selectedInstance) return;
     const { task, dateStr } = selectedInstance;
 
@@ -750,15 +771,22 @@ export default function Dashboard() {
       canc.push(dateStr);
     }
 
+    const currentCustomTimes = { ...(task.custom_day_times || {}) };
+    currentCustomTimes[dateStr] = {
+      start_time: newStart || null,
+      due_time: newDue || null,
+    };
+
     const { error } = await supabase.from('tasks').update({
       completed_dates: comp,
       cancelled_dates: canc,
+      custom_day_times: currentCustomTimes,
     }).eq('id', task.id);
 
     if (!error) {
       await supabase.from('task_history').insert([{
         task_id: task.id,
-        action: `Marked "${task.title}" on ${dateStr} as ${status}`,
+        action: `Updated occurrence on ${dateStr}: ${status} (${newStart || 'Default'} - ${newDue || 'Default'})`,
       }]);
       setSelectedInstance(null);
       fetchTasks();
@@ -1248,7 +1276,7 @@ export default function Dashboard() {
                               </>
                             )}
 
-                            {/* 2. RECURRING TASKS WITH INDIVIDUAL DAY STATUSES */}
+                            {/* 2. RECURRING TASKS WITH CUSTOM OVERRIDE TIMES PER DATE */}
                             {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
                               const dayDateStr = format(dayDate, 'yyyy-MM-dd');
                               let shouldShow = false;
@@ -1266,8 +1294,22 @@ export default function Dashboard() {
                                 return null;
                               }
 
-                              const recStartPos = (dayIdx + startFraction) * 60;
-                              const recEndPos = (dayIdx + endFraction) * 60;
+                              const { start_time: dateStart, due_time: dateDue, isCustom } = getTimesForDate(task, dayDateStr);
+
+                              let dateStartFrac = 0;
+                              if (dateStart) {
+                                const [sh, sm] = dateStart.split(':').map(Number);
+                                dateStartFrac = (sh * 60 + sm) / 1440;
+                              }
+
+                              let dateDueFrac = 1;
+                              if (dateDue) {
+                                const [dh, dm] = dateDue.split(':').map(Number);
+                                dateDueFrac = (dh * 60 + dm) / 1440;
+                              }
+
+                              const recStartPos = (dayIdx + dateStartFrac) * 60;
+                              const recEndPos = (dayIdx + dateDueFrac) * 60;
                               const recWidth = Math.max(8, recEndPos - recStartPos);
                               const recIsNarrow = recWidth < 80;
 
@@ -1281,6 +1323,8 @@ export default function Dashboard() {
                                         dateStr: dayDateStr,
                                         isCompleted: isCompletedThisDay,
                                         isCancelled: isCancelledThisDay,
+                                        currentStartTime: dateStart || '',
+                                        currentDueTime: dateDue || '',
                                       });
                                     }}
                                     style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
@@ -1290,15 +1334,17 @@ export default function Dashboard() {
                                         : isCancelledThisDay
                                         ? 'bg-rose-500 text-white ring-rose-300 opacity-90'
                                         : timingState.barClass
-                                    }`}
-                                    title={`Click to manage status for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : timingState.label}`}
+                                    } ${isCustom ? 'border-2 border-amber-300' : ''}`}
+                                    title={`Click to manage status & time for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : timingState.label}`}
                                   >
                                     {!recIsNarrow && (
                                       <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-bold">
                                         <span className={`truncate pr-1 ${isCancelledThisDay ? 'line-through' : ''}`}>{task.title}</span>
-                                        <span className="text-[9px] px-1 py-0.2 rounded bg-black/20 font-extrabold uppercase shrink-0">
-                                          {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : timingState.isStartNow ? 'Start Now' : 'Active'}
-                                        </span>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <span className="text-[9px] px-1 py-0.2 rounded bg-black/20 font-extrabold uppercase">
+                                            {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : dateDue || 'Active'}
+                                          </span>
+                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -1322,46 +1368,70 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 🎯 POPUP: MANAGE SPECIFIC DAY INSTANCE */}
+      {/* 🎯 POPUP: MANAGE STATUS & CUSTOM START/DUE TIME FOR SPECIFIC DAY */}
       {selectedInstance && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-100">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-100">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 truncate max-w-[240px]">{selectedInstance.task.title}</h3>
+                <h3 className="text-sm font-bold text-slate-900 truncate max-w-[260px]">{selectedInstance.task.title}</h3>
                 <p className="text-xs text-blue-600 font-semibold mt-0.5">Date: {selectedInstance.dateStr}</p>
               </div>
               <button onClick={() => setSelectedInstance(null)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
             </div>
 
-            <p className="text-xs text-slate-600 mb-4">
-              Change status for <b>this occurrence only</b>. Other recurring days will remain active.
-            </p>
+            {/* Custom Time Fields for this Specific Date */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 mb-4 space-y-2">
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-blue-600" /> Set Specific Time for This Day
+              </label>
+              <div className="grid grid-cols-2 gap-2.5 pt-1">
+                <div>
+                  <span className="text-[10px] text-slate-500 font-bold block mb-1">Start Time</span>
+                  <input
+                    type="time"
+                    value={selectedInstance.currentStartTime}
+                    onChange={(e) => setSelectedInstance({ ...selectedInstance, currentStartTime: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 font-bold block mb-1">Due Time</span>
+                  <input
+                    type="time"
+                    value={selectedInstance.currentDueTime}
+                    onChange={(e) => setSelectedInstance({ ...selectedInstance, currentDueTime: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
 
+            {/* Status Options for this occurrence */}
             <div className="space-y-2">
               <button
-                onClick={() => handleSetInstanceStatus('Completed')}
+                onClick={() => handleUpdateInstance('Completed', selectedInstance.currentStartTime, selectedInstance.currentDueTime)}
                 className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition ${
                   selectedInstance.isCompleted ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                 }`}
               >
-                <Check className="w-4 h-4" /> {selectedInstance.isCompleted ? 'Marked as Completed' : 'Mark Completed for This Day'}
+                <Check className="w-4 h-4" /> {selectedInstance.isCompleted ? 'Completed (Save Times)' : 'Mark Completed for This Day'}
               </button>
 
               <button
-                onClick={() => handleSetInstanceStatus('Cancelled')}
+                onClick={() => handleUpdateInstance('Cancelled', selectedInstance.currentStartTime, selectedInstance.currentDueTime)}
                 className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition ${
                   selectedInstance.isCancelled ? 'bg-rose-600 text-white shadow-xs' : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
                 }`}
               >
-                <Ban className="w-4 h-4" /> {selectedInstance.isCancelled ? 'Marked as Cancelled' : 'Cancel for This Day Only'}
+                <Ban className="w-4 h-4" /> {selectedInstance.isCancelled ? 'Cancelled (Save Times)' : 'Cancel for This Day Only'}
               </button>
 
               <button
-                onClick={() => handleSetInstanceStatus('Active')}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
+                onClick={() => handleUpdateInstance('Active', selectedInstance.currentStartTime, selectedInstance.currentDueTime)}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
               >
-                <RefreshCw className="w-4 h-4" /> Reset to Active
+                <RefreshCw className="w-4 h-4" /> Save Updated Times (Keep Active)
               </button>
             </div>
 
@@ -1512,7 +1582,7 @@ export default function Dashboard() {
                 <div className="space-y-4">
                   <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-3">
                     <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-blue-600" /> Date & Time Configuration
+                      <Clock className="w-3.5 h-3.5 text-blue-600" /> Default Date & Time Configuration
                     </h3>
                     
                     <div className="grid grid-cols-2 gap-3">
@@ -1745,7 +1815,7 @@ export default function Dashboard() {
                 <div className="space-y-4">
                   <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-xl space-y-3">
                     <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-blue-600" /> Date & Time Configuration
+                      <Clock className="w-3.5 h-3.5 text-blue-600" /> Default Date & Time Configuration
                     </h3>
                     
                     <div className="grid grid-cols-2 gap-3">
