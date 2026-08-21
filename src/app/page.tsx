@@ -113,7 +113,7 @@ const getTimesForDate = (task: Task, dateStr: string) => {
   };
 };
 
-// 🎯 CALCULATES STATUS STRICTLY FOR A SPECIFIC OCCURRENCE DATE
+// 🎯 ACCURATE TIMING & OVERDUE EVALUATION
 const getOccurrenceTimingState = (task: Task, dateStr: string, now: Date) => {
   const isCompletedThisDay = (task.completed_dates || []).includes(dateStr);
   const isCancelledThisDay = (task.cancelled_dates || []).includes(dateStr);
@@ -131,17 +131,20 @@ const getOccurrenceTimingState = (task: Task, dateStr: string, now: Date) => {
     }
   }
 
+  const actualTargetDueDate = task.frequency === 'once' ? task.due_date : dateStr;
+  const actualTargetStartDate = task.frequency === 'once' ? (task.start_date || task.due_date) : dateStr;
+
   const { start_time, due_time } = getTimesForDate(task, dateStr);
 
-  // Due time calculation for THIS SPECIFIC DATE ONLY
+  // 1. Due DateTime Check
   const [dh, dm] = due_time.split(':').map(Number);
-  const dateParts = dateStr.split('-').map(Number);
-  const occurrenceDueDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], dh, dm, 0);
+  const dueParts = actualTargetDueDate.split('-').map(Number);
+  const occurrenceDueDateTime = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
 
   const diffDueSec = differenceInSeconds(occurrenceDueDateTime, now);
   const diffDueMin = Math.floor(diffDueSec / 60);
 
-  // If this specific occurrence date/time has passed
+  // 🚨 Overdue: Only when Due Time is strictly in the past
   if (diffDueSec < 0) {
     const overdueMins = Math.abs(diffDueMin);
     const hrs = Math.floor(overdueMins / 60);
@@ -158,15 +161,16 @@ const getOccurrenceTimingState = (task: Task, dateStr: string, now: Date) => {
     };
   }
 
-  // Start time calculation for this specific date
+  // 2. Start DateTime Check
   const [sh, sm] = start_time.split(':').map(Number);
-  const occurrenceStartDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], sh, sm, 0);
+  const startParts = actualTargetStartDate.split('-').map(Number);
+  const occurrenceStartDateTime = new Date(startParts[0], startParts[1] - 1, startParts[2], sh, sm, 0);
 
   const diffStartSec = differenceInSeconds(occurrenceStartDateTime, now);
   const diffStartMin = Math.floor(diffStartSec / 60);
 
-  // If this occurrence is happening today and start time has passed but due time hasn't
-  if (diffStartMin <= 0 && diffDueSec > 0) {
+  // ⏳ In Progress / Starting Now (Start Time has passed or starting within 15 mins, and Due Time has NOT passed)
+  if (diffStartSec <= 0 && diffDueSec >= 0) {
     const hrs = Math.floor(diffDueMin / 60);
     const mins = diffDueMin % 60;
     const dueTxt = hrs > 0 ? `${hrs}h ${mins}m` : `${diffDueMin}m`;
@@ -181,7 +185,7 @@ const getOccurrenceTimingState = (task: Task, dateStr: string, now: Date) => {
     };
   }
 
-  // If due within 24 hours
+  // Due within 24 hours
   if (diffDueMin <= 1440) {
     const hrs = Math.floor(diffDueMin / 60);
     const mins = diffDueMin % 60;
@@ -197,7 +201,6 @@ const getOccurrenceTimingState = (task: Task, dateStr: string, now: Date) => {
     };
   }
 
-  // Future occurrences stay active & untouched
   return {
     isOverdue: false,
     isStartingSoon: false,
@@ -912,7 +915,7 @@ export default function Dashboard() {
 
   const todayStr = format(currentTime, 'yyyy-MM-dd');
   const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date || t.due_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
-  const overdueCount = useMemo(() => tasks.filter((t) => getOccurrenceTimingState(t, todayStr, currentTime).isOverdue).length, [tasks, todayStr, currentTime]);
+  const overdueCount = useMemo(() => tasks.filter((t) => getOccurrenceTimingState(t, t.frequency === 'once' ? t.due_date : todayStr, currentTime).isOverdue).length, [tasks, todayStr, currentTime]);
 
   const elapsedDays = (currentTime.getTime() - timelineStart.getTime()) / 86400000;
   const liveIndicatorPosition = mounted && elapsedDays >= 0 && elapsedDays < 21 ? elapsedDays * 60 : null;
@@ -928,7 +931,7 @@ export default function Dashboard() {
       
       const effectiveStart = task.start_date || task.due_date;
       if (activeQuickFilter === 'today' && !isToday(parseISO(effectiveStart)) && !isToday(parseISO(task.due_date))) return false;
-      if (activeQuickFilter === 'overdue' && !getOccurrenceTimingState(task, todayStr, currentTime).isOverdue) return false;
+      if (activeQuickFilter === 'overdue' && !getOccurrenceTimingState(task, task.frequency === 'once' ? task.due_date : todayStr, currentTime).isOverdue) return false;
       if (filterFromDate && effectiveStart < filterFromDate) return false;
       if (filterToDate && task.due_date > filterToDate) return false;
 
@@ -1206,8 +1209,9 @@ export default function Dashboard() {
                     </div>
 
                     {deptTasks.map((task) => {
-                      const todayTimingState = getOccurrenceTimingState(task, todayStr, currentTime);
                       const effectiveStart = task.start_date || task.due_date;
+                      const taskTimingState = getOccurrenceTimingState(task, task.frequency === 'once' ? task.due_date : todayStr, currentTime);
+
                       const startParsed = startOfDay(parseISO(effectiveStart));
                       const endParsed = startOfDay(parseISO(task.due_date));
                       
@@ -1235,13 +1239,13 @@ export default function Dashboard() {
                       const plainDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '') : '';
 
                       return (
-                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${todayTimingState.isOverdue ? 'bg-rose-50/40' : todayTimingState.isStartNow ? 'bg-amber-50/40' : ''}`}>
+                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${taskTimingState.isOverdue ? 'bg-rose-50/40' : taskTimingState.isStartNow ? 'bg-amber-50/40' : ''}`}>
                           
                           <div onClick={() => setActiveTask(task)} className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] cursor-pointer">
                             <div className="flex flex-col truncate pr-2">
                               <div className="flex items-center gap-1.5">
                                 {task.type === 'event' && <Video className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
-                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${todayTimingState.isOverdue ? 'text-rose-700 font-bold' : todayTimingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
+                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${taskTimingState.isOverdue ? 'text-rose-700 font-bold' : taskTimingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
                                   {task.title}
                                 </span>
                                 {task.frequency !== 'once' && (
@@ -1261,8 +1265,8 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={`text-[10px] px-2 py-0.5 rounded border ${todayTimingState.badgeClass}`}>
-                                {todayTimingState.label}
+                              <span className={`text-[10px] px-2 py-0.5 rounded border ${taskTimingState.badgeClass}`}>
+                                {taskTimingState.label}
                               </span>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
                             </div>
@@ -1275,7 +1279,7 @@ export default function Dashboard() {
                                 <div
                                   onClick={() => setActiveTask(task)}
                                   style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
-                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${todayTimingState.barClass}`}
+                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center overflow-hidden shadow-xs transition z-10 cursor-pointer ${taskTimingState.barClass}`}
                                   title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
                                 >
                                   {!isNarrow && (
@@ -1291,14 +1295,14 @@ export default function Dashboard() {
                                 </div>
 
                                 {isNarrow && (
-                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${todayTimingState.isOverdue ? 'text-rose-700 font-bold' : todayTimingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
+                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${taskTimingState.isOverdue ? 'text-rose-700 font-bold' : taskTimingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
                                     <span>{task.title}</span>
                                   </div>
                                 )}
                               </>
                             )}
 
-                            {/* 2. RECURRING TASKS: EACH DAY OCCURRENCE CALCULATES ITS OWN TIMING */}
+                            {/* 2. RECURRING TASKS: EACH OCCURRENCE HAS ITS OWN ACCURATE TIMING & COLOR */}
                             {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
                               const dayDateStr = format(dayDate, 'yyyy-MM-dd');
                               let shouldShow = false;
@@ -1316,7 +1320,6 @@ export default function Dashboard() {
                                 return null;
                               }
 
-                              // Calculate status strictly for THIS occurrence date
                               const occurrenceState = getOccurrenceTimingState(task, dayDateStr, currentTime);
                               const { start_time: dateStart, due_time: dateDue, isCustom } = getTimesForDate(task, dayDateStr);
 
@@ -1352,7 +1355,7 @@ export default function Dashboard() {
                                       });
                                     }}
                                     style={{ left: `${recStartPos}px`, width: `${recWidth}px` }}
-                                    className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs z-10 transition cursor-pointer hover:ring-2 ${
+                                    className={`absolute h-6.5 rounded-lg px-2 flex items-center overflow-hidden shadow-xs z-10 transition cursor-pointer hover:ring-2 ${
                                       isCompletedThisDay
                                         ? 'bg-emerald-600 text-white ring-emerald-300'
                                         : isCancelledThisDay
@@ -1879,7 +1882,7 @@ export default function Dashboard() {
 
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2">
                     <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                      <span className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-blue-600" /> Email Participants</span>
+                      <span className="flex items-center gap-1.5"><Mail className="w-3.5 h-3.5 text-blue-600" /> Alert Participants</span>
                       <span className="text-[10px] text-emerald-600 flex items-center gap-1 font-semibold"><ShieldCheck className="w-3 h-3" /> Mandatory Synced</span>
                     </label>
                     <div className="flex gap-2">
