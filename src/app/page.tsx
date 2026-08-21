@@ -100,7 +100,7 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// Helper to get time for a specific date (considers custom override if present)
+// Helper to get time for a specific date
 const getTimesForDate = (task: Task, dateStr: string) => {
   const custom = task.custom_day_times?.[dateStr];
   const startTimeVal = custom?.start_time !== undefined ? custom.start_time : task.start_time;
@@ -113,25 +113,41 @@ const getTimesForDate = (task: Task, dateStr: string) => {
   };
 };
 
-const getTaskTimingState = (task: Task, now: Date) => {
-  const isDone = task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled';
-  if (isDone) return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: task.status, badgeClass: STATUS_STYLES[task.status], barClass: '' };
+// 🎯 CALCULATES STATUS STRICTLY FOR A SPECIFIC OCCURRENCE DATE
+const getOccurrenceTimingState = (task: Task, dateStr: string, now: Date) => {
+  const isCompletedThisDay = (task.completed_dates || []).includes(dateStr);
+  const isCancelledThisDay = (task.cancelled_dates || []).includes(dateStr);
 
-  const todayStr = format(now, 'yyyy-MM-dd');
-  const { start_time, due_time } = getTimesForDate(task, todayStr);
+  if (isCompletedThisDay) {
+    return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: 'Done', badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold', barClass: 'bg-emerald-600 text-white ring-emerald-300' };
+  }
+  if (isCancelledThisDay) {
+    return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: 'Cancelled', badgeClass: 'bg-rose-50 text-rose-700 border-rose-200 line-through', barClass: 'bg-rose-500 text-white ring-rose-300 opacity-90' };
+  }
 
+  if (task.frequency === 'once') {
+    if (task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled') {
+      return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: task.status, badgeClass: STATUS_STYLES[task.status], barClass: 'bg-emerald-500 text-white' };
+    }
+  }
+
+  const { start_time, due_time } = getTimesForDate(task, dateStr);
+
+  // Due time calculation for THIS SPECIFIC DATE ONLY
   const [dh, dm] = due_time.split(':').map(Number);
-  const dueParts = (task.frequency === 'once' ? task.due_date : todayStr).split('-').map(Number);
-  const dueDateTime = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
+  const dateParts = dateStr.split('-').map(Number);
+  const occurrenceDueDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], dh, dm, 0);
 
-  const diffDueSec = differenceInSeconds(dueDateTime, now);
+  const diffDueSec = differenceInSeconds(occurrenceDueDateTime, now);
   const diffDueMin = Math.floor(diffDueSec / 60);
 
+  // If this specific occurrence date/time has passed
   if (diffDueSec < 0) {
     const overdueMins = Math.abs(diffDueMin);
     const hrs = Math.floor(overdueMins / 60);
     const mins = overdueMins % 60;
     const timeTxt = hrs > 0 ? `${hrs}h ${mins}m` : `${overdueMins}m`;
+
     return {
       isOverdue: true,
       isStartingSoon: false,
@@ -142,14 +158,14 @@ const getTaskTimingState = (task: Task, now: Date) => {
     };
   }
 
-  const effectiveStart = task.frequency === 'once' ? (task.start_date || task.due_date) : todayStr;
+  // Start time calculation for this specific date
   const [sh, sm] = start_time.split(':').map(Number);
-  const startParts = effectiveStart.split('-').map(Number);
-  const startDateTime = new Date(startParts[0], startParts[1] - 1, startParts[2], sh, sm, 0);
+  const occurrenceStartDateTime = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], sh, sm, 0);
 
-  const diffStartSec = differenceInSeconds(startDateTime, now);
+  const diffStartSec = differenceInSeconds(occurrenceStartDateTime, now);
   const diffStartMin = Math.floor(diffStartSec / 60);
 
+  // If this occurrence is happening today and start time has passed but due time hasn't
   if (diffStartMin <= 0 && diffDueSec > 0) {
     const hrs = Math.floor(diffDueMin / 60);
     const mins = diffDueMin % 60;
@@ -165,6 +181,7 @@ const getTaskTimingState = (task: Task, now: Date) => {
     };
   }
 
+  // If due within 24 hours
   if (diffDueMin <= 1440) {
     const hrs = Math.floor(diffDueMin / 60);
     const mins = diffDueMin % 60;
@@ -180,12 +197,13 @@ const getTaskTimingState = (task: Task, now: Date) => {
     };
   }
 
+  // Future occurrences stay active & untouched
   return {
     isOverdue: false,
     isStartingSoon: false,
     isStartNow: false,
     label: task.status,
-    badgeClass: STATUS_STYLES[task.status],
+    badgeClass: STATUS_STYLES[task.status] || 'bg-blue-50 text-blue-700 border-blue-200',
     barClass: task.type === 'event' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white',
   };
 };
@@ -597,7 +615,7 @@ export default function Dashboard() {
   const timelineStart = useMemo(() => startOfDay(startOfWeek(new Date(), { weekStartsOn: 0 })), []);
   const daysArray = useMemo(() => Array.from({ length: 21 }, (_, i) => addDays(timelineStart, i)), [timelineStart]);
 
-  // Active Corner Reminders
+  // Active Corner Reminders (Calculated for current live day)
   const activeReminders = useMemo(() => {
     if (!mounted) return [];
     const reminders: ActiveReminder[] = [];
@@ -760,7 +778,7 @@ export default function Dashboard() {
     }
   };
 
-  // 🎯 UPDATE DAY INSTANCE: STATUS & INDIVIDUAL TIME OVERRIDES
+  // 🎯 UPDATE OCCURRENCE: STATUS & INDIVIDUAL TIME OVERRIDES
   const handleUpdateInstance = async (status: 'Active' | 'Completed' | 'Cancelled', newStart: string, newDue: string) => {
     if (!selectedInstance) return;
     const { task, dateStr } = selectedInstance;
@@ -892,8 +910,9 @@ export default function Dashboard() {
     setShowCompletedCancelled(false);
   };
 
+  const todayStr = format(currentTime, 'yyyy-MM-dd');
   const todayCount = useMemo(() => tasks.filter((t) => isToday(parseISO(t.start_date || t.due_date)) || isToday(parseISO(t.due_date))).length, [tasks]);
-  const overdueCount = useMemo(() => tasks.filter((t) => getTaskTimingState(t, currentTime).isOverdue).length, [tasks, currentTime]);
+  const overdueCount = useMemo(() => tasks.filter((t) => getOccurrenceTimingState(t, todayStr, currentTime).isOverdue).length, [tasks, todayStr, currentTime]);
 
   const elapsedDays = (currentTime.getTime() - timelineStart.getTime()) / 86400000;
   const liveIndicatorPosition = mounted && elapsedDays >= 0 && elapsedDays < 21 ? elapsedDays * 60 : null;
@@ -909,13 +928,13 @@ export default function Dashboard() {
       
       const effectiveStart = task.start_date || task.due_date;
       if (activeQuickFilter === 'today' && !isToday(parseISO(effectiveStart)) && !isToday(parseISO(task.due_date))) return false;
-      if (activeQuickFilter === 'overdue' && !getTaskTimingState(task, currentTime).isOverdue) return false;
+      if (activeQuickFilter === 'overdue' && !getOccurrenceTimingState(task, todayStr, currentTime).isOverdue) return false;
       if (filterFromDate && effectiveStart < filterFromDate) return false;
       if (filterToDate && task.due_date > filterToDate) return false;
 
       return true;
     });
-  }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate, showCompletedCancelled, currentTime]);
+  }, [tasks, search, selectedDept, selectedStatus, activeQuickFilter, filterFromDate, filterToDate, showCompletedCancelled, todayStr, currentTime]);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans relative">
@@ -1075,7 +1094,6 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center flex-wrap gap-2.5">
-            {/* Audio Test Button */}
             <button
               onClick={() => playAlarmSound('exact-alarm')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition"
@@ -1188,7 +1206,7 @@ export default function Dashboard() {
                     </div>
 
                     {deptTasks.map((task) => {
-                      const timingState = getTaskTimingState(task, currentTime);
+                      const todayTimingState = getOccurrenceTimingState(task, todayStr, currentTime);
                       const effectiveStart = task.start_date || task.due_date;
                       const startParsed = startOfDay(parseISO(effectiveStart));
                       const endParsed = startOfDay(parseISO(task.due_date));
@@ -1217,13 +1235,13 @@ export default function Dashboard() {
                       const plainDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '') : '';
 
                       return (
-                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${timingState.isOverdue ? 'bg-rose-50/40' : timingState.isStartNow ? 'bg-amber-50/40' : ''}`}>
+                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${todayTimingState.isOverdue ? 'bg-rose-50/40' : todayTimingState.isStartNow ? 'bg-amber-50/40' : ''}`}>
                           
                           <div onClick={() => setActiveTask(task)} className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] cursor-pointer">
                             <div className="flex flex-col truncate pr-2">
                               <div className="flex items-center gap-1.5">
                                 {task.type === 'event' && <Video className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
-                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${timingState.isOverdue ? 'text-rose-700 font-bold' : timingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
+                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${todayTimingState.isOverdue ? 'text-rose-700 font-bold' : todayTimingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
                                   {task.title}
                                 </span>
                                 {task.frequency !== 'once' && (
@@ -1243,8 +1261,8 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={`text-[10px] px-2 py-0.5 rounded border ${timingState.badgeClass}`}>
-                                {timingState.label}
+                              <span className={`text-[10px] px-2 py-0.5 rounded border ${todayTimingState.badgeClass}`}>
+                                {todayTimingState.label}
                               </span>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
                             </div>
@@ -1257,7 +1275,7 @@ export default function Dashboard() {
                                 <div
                                   onClick={() => setActiveTask(task)}
                                   style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
-                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${timingState.barClass}`}
+                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${todayTimingState.barClass}`}
                                   title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
                                 >
                                   {!isNarrow && (
@@ -1273,14 +1291,14 @@ export default function Dashboard() {
                                 </div>
 
                                 {isNarrow && (
-                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${timingState.isOverdue ? 'text-rose-700 font-bold' : timingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
+                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${todayTimingState.isOverdue ? 'text-rose-700 font-bold' : todayTimingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
                                     <span>{task.title}</span>
                                   </div>
                                 )}
                               </>
                             )}
 
-                            {/* 2. RECURRING TASKS WITH CUSTOM OVERRIDE TIMES PER DATE */}
+                            {/* 2. RECURRING TASKS: EACH DAY OCCURRENCE CALCULATES ITS OWN TIMING */}
                             {task.frequency !== 'once' && daysArray.map((dayDate, dayIdx) => {
                               const dayDateStr = format(dayDate, 'yyyy-MM-dd');
                               let shouldShow = false;
@@ -1298,6 +1316,8 @@ export default function Dashboard() {
                                 return null;
                               }
 
+                              // Calculate status strictly for THIS occurrence date
+                              const occurrenceState = getOccurrenceTimingState(task, dayDateStr, currentTime);
                               const { start_time: dateStart, due_time: dateDue, isCustom } = getTimesForDate(task, dayDateStr);
 
                               let dateStartFrac = 0;
@@ -1337,16 +1357,16 @@ export default function Dashboard() {
                                         ? 'bg-emerald-600 text-white ring-emerald-300'
                                         : isCancelledThisDay
                                         ? 'bg-rose-500 text-white ring-rose-300 opacity-90'
-                                        : timingState.barClass
+                                        : occurrenceState.barClass
                                     } ${isCustom ? 'border-2 border-amber-300' : ''}`}
-                                    title={`Click to manage status & time for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : timingState.label}`}
+                                    title={`Click to manage status & time for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : occurrenceState.label}`}
                                   >
                                     {!recIsNarrow && (
                                       <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-bold">
                                         <span className={`truncate pr-1 ${isCancelledThisDay ? 'line-through' : ''}`}>{task.title}</span>
                                         <div className="flex items-center gap-1 shrink-0">
                                           <span className="text-[9px] px-1 py-0.2 rounded bg-black/20 font-extrabold uppercase">
-                                            {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : dateDue || 'Active'}
+                                            {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : occurrenceState.isOverdue ? 'Overdue' : occurrenceState.isStartNow ? 'Start Now' : dateDue || 'Active'}
                                           </span>
                                         </div>
                                       </div>
