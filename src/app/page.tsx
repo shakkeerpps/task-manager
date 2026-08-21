@@ -92,28 +92,84 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// Helper to calculate exact task timing states
+// 🎯 ACCURATE TIMING & OVERDUE CALCULATION
 const getTaskTimingState = (task: Task, now: Date) => {
   const isDone = task.status === 'Completed' || task.status === 'Resolved' || task.status === 'Cancelled';
-  if (isDone) return { isOverdue: false, isStartingSoon: false };
+  if (isDone) return { isOverdue: false, isStartingSoon: false, isStartNow: false, label: task.status, badgeClass: STATUS_STYLES[task.status] };
 
-  // Due Date & Time check
+  // Due Time calculation
   const [dh, dm] = (task.due_time || '23:59').split(':').map(Number);
-  const dueParsed = parseISO(task.due_date);
-  const dueDateTime = new Date(dueParsed.getFullYear(), dueParsed.getMonth(), dueParsed.getDate(), dh, dm, 59);
+  const dueParts = task.due_date.split('-').map(Number);
+  const dueDateTime = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
 
-  const isOverdue = now > dueDateTime;
+  const diffDueSec = differenceInSeconds(dueDateTime, now);
+  const diffDueMin = Math.floor(diffDueSec / 60);
 
-  // Start Date & Time check
+  // Overdue Check (Only when current time is past Due Date & Time)
+  if (diffDueSec < 0) {
+    const overdueMins = Math.abs(diffDueMin);
+    const hrs = Math.floor(overdueMins / 60);
+    const mins = overdueMins % 60;
+    const timeTxt = hrs > 0 ? `${hrs}h ${mins}m` : `${overdueMins}m`;
+    return {
+      isOverdue: true,
+      isStartingSoon: false,
+      isStartNow: false,
+      label: `Overdue by ${timeTxt}`,
+      badgeClass: 'bg-rose-100 text-rose-800 border-rose-300 font-bold',
+      barClass: 'bg-rose-600 text-white ring-2 ring-rose-400 animate-pulse',
+    };
+  }
+
+  // Start Time Check
   const effectiveStart = task.start_date || task.due_date;
   const [sh, sm] = (task.start_time || '00:00').split(':').map(Number);
-  const startParsed = parseISO(effectiveStart);
-  const startDateTime = new Date(startParsed.getFullYear(), startParsed.getMonth(), startParsed.getDate(), sh, sm, 0);
+  const startParts = effectiveStart.split('-').map(Number);
+  const startDateTime = new Date(startParts[0], startParts[1] - 1, startParts[2], sh, sm, 0);
 
-  // If start date is today, or starting within 24 hours and not yet overdue
-  const isStartingSoon = !isOverdue && (isToday(startParsed) || (startDateTime > now && differenceInSeconds(startDateTime, now) <= 86400));
+  const diffStartSec = differenceInSeconds(startDateTime, now);
+  const diffStartMin = Math.floor(diffStartSec / 60);
 
-  return { isOverdue, isStartingSoon };
+  // Started or Starts within 10 mins
+  if (diffStartMin <= 0 && diffDueSec > 0) {
+    const hrs = Math.floor(diffDueMin / 60);
+    const mins = diffDueMin % 60;
+    const dueTxt = hrs > 0 ? `${hrs}h ${mins}m` : `${diffDueMin}m`;
+
+    return {
+      isOverdue: false,
+      isStartingSoon: true,
+      isStartNow: true,
+      label: `Start Now (Due in ${dueTxt})`,
+      badgeClass: 'bg-amber-100 text-amber-900 border-amber-300 font-bold',
+      barClass: 'bg-amber-500 text-slate-950 font-bold ring-2 ring-amber-400',
+    };
+  }
+
+  // Due in Minutes / Hours
+  if (diffDueMin <= 1440) {
+    const hrs = Math.floor(diffDueMin / 60);
+    const mins = diffDueMin % 60;
+    const dueTxt = hrs > 0 ? `${hrs}h ${mins}m` : `${diffDueMin}m`;
+
+    return {
+      isOverdue: false,
+      isStartingSoon: false,
+      isStartNow: false,
+      label: `Due in ${dueTxt}`,
+      badgeClass: 'bg-blue-100 text-blue-900 border-blue-300 font-semibold',
+      barClass: task.type === 'event' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white',
+    };
+  }
+
+  return {
+    isOverdue: false,
+    isStartingSoon: false,
+    isStartNow: false,
+    label: task.status,
+    badgeClass: STATUS_STYLES[task.status],
+    barClass: task.type === 'event' ? 'bg-violet-600 text-white' : 'bg-blue-600 text-white',
+  };
 };
 
 // 🎨 ADVANCED WORD-STYLE RICH TEXT & TABLE EDITOR
@@ -320,6 +376,7 @@ export default function Dashboard() {
     }
   }, [unlockAudio]);
 
+  // Request Notification Permission
   useEffect(() => {
     setMounted(true);
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -354,7 +411,8 @@ export default function Dashboard() {
         // 1. START TIME (3 MINS PRE-ALERT & EXACT START)
         if (task.start_time) {
           const [sh, sm] = task.start_time.split(':').map(Number);
-          const startTargetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm, 0);
+          const startParts = (task.start_date || task.due_date).split('-').map(Number);
+          const startTargetDate = new Date(startParts[0], startParts[1] - 1, startParts[2], sh, sm, 0);
           const diffSec = differenceInSeconds(startTargetDate, now);
 
           if (diffSec <= 180 && diffSec >= 170) {
@@ -402,7 +460,8 @@ export default function Dashboard() {
         // 2. DUE TIME (3 MINS PRE-ALERT & EXACT DUE)
         if (task.due_time) {
           const [dh, dm] = task.due_time.split(':').map(Number);
-          const dueTargetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), dh, dm, 0);
+          const dueParts = task.due_date.split('-').map(Number);
+          const dueTargetDate = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
           const diffSec = differenceInSeconds(dueTargetDate, now);
 
           if (diffSec <= 180 && diffSec >= 170) {
@@ -543,7 +602,7 @@ export default function Dashboard() {
             reminders.push({
               task,
               diffSeconds: diffSec,
-              timeLabel: diffMin <= 0 ? 'Starting right now!' : `Starts in ${diffMin}m`,
+              timeLabel: diffMin <= 0 ? 'Start Now!' : `Starts in ${diffMin}m`,
               isOverdue: false,
               typeLabel: diffMin <= 3 && diffMin >= 0 ? 'start-pre' : 'start',
             });
@@ -553,7 +612,8 @@ export default function Dashboard() {
 
       if (task.due_time) {
         const [dh, dm] = task.due_time.split(':').map(Number);
-        const dueTarget = new Date(now.getFullYear(), now.getMonth(), now.getDate(), dh, dm, 0);
+        const dueParts = task.due_date.split('-').map(Number);
+        const dueTarget = new Date(dueParts[0], dueParts[1] - 1, dueParts[2], dh, dm, 0);
         const diffSec = differenceInSeconds(dueTarget, now);
         const diffMin = Math.round(diffSec / 60);
 
@@ -1096,7 +1156,7 @@ export default function Dashboard() {
                     </div>
 
                     {deptTasks.map((task) => {
-                      const { isOverdue, isStartingSoon } = getTaskTimingState(task, currentTime);
+                      const timingState = getTaskTimingState(task, currentTime);
                       const effectiveStart = task.start_date || task.due_date;
                       const startParsed = startOfDay(parseISO(effectiveStart));
                       const endParsed = startOfDay(parseISO(task.due_date));
@@ -1125,13 +1185,13 @@ export default function Dashboard() {
                       const plainDesc = task.description ? task.description.replace(/<[^>]*>?/gm, '') : '';
 
                       return (
-                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${isOverdue ? 'bg-rose-50/40' : isStartingSoon ? 'bg-amber-50/40' : ''}`}>
+                        <div key={task.id} className={`grid grid-cols-[400px_repeat(21,60px)] h-12 items-center hover:bg-slate-50 border-b border-slate-100 group transition relative ${timingState.isOverdue ? 'bg-rose-50/40' : timingState.isStartNow ? 'bg-amber-50/40' : ''}`}>
                           
                           <div onClick={() => setActiveTask(task)} className="px-4 flex items-center justify-between border-r border-slate-200 h-full bg-white group-hover:bg-slate-50 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] cursor-pointer">
                             <div className="flex flex-col truncate pr-2">
                               <div className="flex items-center gap-1.5">
                                 {task.type === 'event' && <Video className="w-3.5 h-3.5 text-violet-600 shrink-0" />}
-                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${isOverdue ? 'text-rose-700 font-bold' : isStartingSoon ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
+                                <span className={`text-xs font-semibold truncate group-hover:text-blue-600 transition ${timingState.isOverdue ? 'text-rose-700 font-bold' : timingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`} title={task.title}>
                                   {task.title}
                                 </span>
                                 {task.frequency !== 'once' && (
@@ -1151,39 +1211,21 @@ export default function Dashboard() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                                isOverdue 
-                                  ? 'bg-rose-100 text-rose-800 border-rose-300' 
-                                  : isStartingSoon 
-                                  ? 'bg-amber-100 text-amber-800 border-amber-300' 
-                                  : STATUS_STYLES[task.status]
-                              }`}>
-                                {isOverdue ? 'Overdue' : isStartingSoon ? 'Start Soon' : task.status}
+                              <span className={`text-[10px] px-2 py-0.5 rounded border ${timingState.badgeClass}`}>
+                                {timingState.label}
                               </span>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${PRIORITY_STYLES[task.priority]}`}>{task.priority}</span>
                             </div>
                           </div>
 
                           <div className="col-span-21 relative h-full flex items-center">
-                            {/* 1. ONCE TASKS TIMELINE BAR (RED for Overdue, YELLOW for Start Soon, BLUE/VIOLET/GREEN for Active/Done) */}
+                            {/* 1. ONCE TASKS TIMELINE BAR */}
                             {task.frequency === 'once' && isVisible && (
                               <>
                                 <div
                                   onClick={() => setActiveTask(task)}
                                   style={{ left: `${exactStartPos}px`, width: `${exactWidth}px` }}
-                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${
-                                    isOverdue 
-                                      ? 'bg-rose-600 text-white ring-2 ring-rose-400 animate-pulse' 
-                                      : isStartingSoon
-                                      ? 'bg-amber-500 text-slate-950 font-bold ring-2 ring-amber-400 animate-pulse'
-                                      : task.status === 'Completed' || task.status === 'Resolved' 
-                                      ? 'bg-emerald-500 text-white' 
-                                      : task.status === 'Blocked' 
-                                      ? 'bg-rose-500 text-white' 
-                                      : task.type === 'event'
-                                      ? 'bg-violet-600 text-white hover:ring-2 hover:ring-violet-300'
-                                      : 'bg-indigo-600 text-white hover:ring-2 hover:ring-indigo-300'
-                                  }`}
+                                  className={`absolute h-6.5 rounded-lg px-2 flex items-center shadow-xs transition z-10 cursor-pointer ${timingState.barClass}`}
                                   title={`${task.title} (${task.start_time || ''} - ${task.due_time || ''})`}
                                 >
                                   {!isNarrow && (
@@ -1199,7 +1241,7 @@ export default function Dashboard() {
                                 </div>
 
                                 {isNarrow && (
-                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${isOverdue ? 'text-rose-700 font-bold' : isStartingSoon ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
+                                  <div style={{ left: `${exactEndPos + 4}px` }} className={`absolute flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap z-0 pointer-events-none ${timingState.isOverdue ? 'text-rose-700 font-bold' : timingState.isStartNow ? 'text-amber-800 font-bold' : 'text-slate-800'}`}>
                                     <span>{task.title}</span>
                                   </div>
                                 )}
@@ -1247,21 +1289,15 @@ export default function Dashboard() {
                                         ? 'bg-emerald-600 text-white ring-emerald-300'
                                         : isCancelledThisDay
                                         ? 'bg-rose-500 text-white ring-rose-300 opacity-90'
-                                        : isOverdue
-                                        ? 'bg-rose-600 text-white ring-rose-400'
-                                        : isStartingSoon
-                                        ? 'bg-amber-500 text-slate-950 ring-amber-400'
-                                        : task.type === 'event'
-                                        ? 'bg-violet-600 text-white hover:ring-violet-300'
-                                        : 'bg-blue-600 text-white hover:ring-blue-300'
+                                        : timingState.barClass
                                     }`}
-                                    title={`Click to manage status for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : isOverdue ? 'Overdue' : 'Active'}`}
+                                    title={`Click to manage status for ${dayDateStr}: ${isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : timingState.label}`}
                                   >
                                     {!recIsNarrow && (
                                       <div className="flex items-center justify-between w-full overflow-hidden text-[11px] font-bold">
                                         <span className={`truncate pr-1 ${isCancelledThisDay ? 'line-through' : ''}`}>{task.title}</span>
                                         <span className="text-[9px] px-1 py-0.2 rounded bg-black/20 font-extrabold uppercase shrink-0">
-                                          {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : isOverdue ? 'Overdue' : isStartingSoon ? 'Starting' : 'Active'}
+                                          {isCompletedThisDay ? 'Done' : isCancelledThisDay ? 'Cancelled' : timingState.isStartNow ? 'Start Now' : 'Active'}
                                         </span>
                                       </div>
                                     )}
